@@ -108,9 +108,7 @@ async function handleIncomingMessage(message) {
 
 async function initWhatsappClient() {
   client = new Client({
-    authStrategy: new LocalAuth({
-      dataPath: "./session"
-    }),
+    authStrategy: new LocalAuth({ clientId: env.WHATSAPP_CLIENT_ID }),
     puppeteer: {
       headless: true,
     },
