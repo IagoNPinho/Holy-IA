@@ -1,0 +1,7 @@
+# Root ignores
+backend/.env
+backend/node_modules
+frontend/node_modules
+frontend/.next
+frontend/out
+.DS_Store
