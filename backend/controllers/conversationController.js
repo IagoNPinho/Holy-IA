@@ -32,6 +32,7 @@ async function listConversations(_req, res, next) {
         ) AS updated_at
       FROM conversations c
       ORDER BY updated_at IS NULL, updated_at DESC
+      LIMIT 20
       `
     );
     res.json({ data: conversations });

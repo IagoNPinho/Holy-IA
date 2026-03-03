@@ -29,6 +29,7 @@ export default function DashboardPage() {
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [conversationsError, setConversationsError] = useState<string | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<string>("disconnected")
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -41,31 +42,53 @@ export default function DashboardPage() {
   const selectedMessages = selectedId ? messages[selectedId] || [] : []
 
   useEffect(() => {
+    let isActive = true
     const load = async () => {
       setIsLoading(true)
       try {
-        const aiStatus = await request<{ enabled: boolean }>("/ai/status")
-        setAiEnabled(aiStatus.enabled)
-        const res = await request<{ data: ConversationApi[] }>("/conversations")
-        const mapped = res.data.map(item => ({
-          id: String(item.id),
-          contactId: item.contact_id,
-          contactName: item.name || item.contact_id,
-          lastMessage: item.last_message || "",
-          timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
-          unread: false,
-          aiEnabled: aiStatus.enabled,
-        }))
-        setConversations(mapped)
-        const waStatus = await request<{ status: string }>("/whatsapp/status")
-        setWhatsappStatus(waStatus.status)
+        const [aiResult, convResult, waResult] = await Promise.allSettled([
+          request<{ enabled: boolean }>("/ai/status"),
+          request<{ data: ConversationApi[] }>("/conversations"),
+          request<{ status: string }>("/whatsapp/status"),
+        ])
+
+        if (!isActive) return
+
+        if (aiResult.status === "fulfilled") {
+          setAiEnabled(aiResult.value.enabled)
+        }
+
+        if (convResult.status === "fulfilled") {
+          const mapped = convResult.value.data.map(item => ({
+            id: String(item.id),
+            contactId: item.contact_id,
+            contactName: item.name || item.contact_id,
+            lastMessage: item.last_message || "",
+            timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
+            unread: false,
+            aiEnabled: aiResult.status === "fulfilled" ? aiResult.value.enabled : aiEnabled,
+          }))
+          setConversations(mapped)
+          setConversationsError(null)
+        } else {
+          setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
+        }
+
+        if (waResult.status === "fulfilled") {
+          setWhatsappStatus(waResult.value.status)
+        }
       } catch (err) {
         console.error(err)
       } finally {
-        setIsLoading(false)
+        if (isActive) setIsLoading(false)
       }
     }
     load()
+    const interval = setInterval(load, 10000)
+    return () => {
+      isActive = false
+      clearInterval(interval)
+    }
   }, [])
 
   useEffect(() => {
@@ -186,11 +209,20 @@ export default function DashboardPage() {
   return (
     <div className="flex h-full">
       <div className="w-[30%] min-w-[280px] max-w-[400px]">
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedId}
-          onSelect={handleSelectConversation}
-        />
+        <div className="flex flex-col h-full">
+          {conversationsError && (
+            <div className="px-4 py-2 text-xs text-destructive border-b border-border bg-card">
+              {conversationsError}
+            </div>
+          )}
+          <div className="flex-1">
+            <ConversationList
+              conversations={conversations}
+              selectedId={selectedId}
+              onSelect={handleSelectConversation}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="flex-1">
