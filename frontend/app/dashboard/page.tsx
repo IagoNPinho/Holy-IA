@@ -12,6 +12,7 @@ type ConversationApi = {
   id: number
   contact_id: string
   name: string | null
+  ai_enabled: number | null
   last_message: string | null
   updated_at: string | null
 }
@@ -66,7 +67,7 @@ export default function DashboardPage() {
             lastMessage: item.last_message || "",
             timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
             unread: false,
-            aiEnabled: aiResult.status === "fulfilled" ? aiResult.value.enabled : aiEnabled,
+            aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
           }))
           setConversations(mapped)
           setConversationsError(null)
@@ -100,7 +101,7 @@ export default function DashboardPage() {
           id: String(item.id),
           content: item.body,
           sender: item.from_me ? "ai" : "contact",
-          timestamp: new Date(item.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+          timestamp: item.timestamp,
         }))
         setMessages(prev => ({ ...prev, [selectedId]: mapped }))
       } catch (err) {
@@ -118,14 +119,17 @@ export default function DashboardPage() {
   }
 
   const handleToggleAi = async (enabled: boolean) => {
+    if (!selectedConversation) return
     try {
-      const res = await request<{ aiEnabled: boolean }>("/toggle-ia", {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      })
-      setAiEnabled(res.aiEnabled)
+      const res = await request<{ ok: boolean; aiEnabled: boolean }>(
+        `/conversations/${selectedConversation.id}/ai-toggle`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ enabled }),
+        }
+      )
       setConversations(prev =>
-        prev.map(c => ({ ...c, aiEnabled: res.aiEnabled }))
+        prev.map(c => (c.id === selectedConversation.id ? { ...c, aiEnabled: res.aiEnabled } : c))
       )
     } catch (err) {
       console.error(err)
@@ -144,7 +148,7 @@ export default function DashboardPage() {
         id: String(item.id),
         content: item.body,
         sender: item.from_me ? "ai" : "contact",
-        timestamp: new Date(item.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+        timestamp: item.timestamp,
       }))
       setMessages(prev => ({ ...prev, [selectedConversation.id]: mapped }))
     } catch (err) {
@@ -276,7 +280,7 @@ export default function DashboardPage() {
           <ChatArea
             contactName={selectedConversation.contactName}
             messages={selectedMessages}
-            aiEnabled={aiEnabled}
+            aiEnabled={selectedConversation.aiEnabled ?? false}
             onToggleAi={handleToggleAi}
             onSendMessage={handleSendMessage}
           />

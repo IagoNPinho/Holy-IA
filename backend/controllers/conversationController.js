@@ -1,5 +1,5 @@
 // Conversation and message read endpoints.
-const { all } = require("../database/db");
+const { all, run } = require("../database/db");
 const { sendManualMessage } = require("../services/whatsappService");
 
 async function listConversations(_req, res, next) {
@@ -10,6 +10,7 @@ async function listConversations(_req, res, next) {
         c.id,
         c.contact_id,
         COALESCE(c.name, c.contact_name, c.contact_id) AS name,
+        COALESCE(c.ai_enabled, 1) AS ai_enabled,
         COALESCE(
           c.last_message,
           (
@@ -79,8 +80,28 @@ async function sendManual(req, res, next) {
   }
 }
 
+async function toggleConversationAi(req, res, next) {
+  try {
+    const { conversationId } = req.params;
+    const { enabled } = req.body || {};
+    const value = enabled ? 1 : 0;
+    await run(
+      `
+      UPDATE conversations
+      SET ai_enabled = ?, updated_at = datetime('now')
+      WHERE id = ?
+      `,
+      [value, conversationId]
+    );
+    return res.json({ ok: true, aiEnabled: Boolean(value) });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   listConversations,
   listMessages,
   sendManual,
+  toggleConversationAi,
 };

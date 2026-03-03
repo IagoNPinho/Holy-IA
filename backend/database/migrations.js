@@ -26,6 +26,7 @@ async function migrate() {
     name: "TEXT",
     last_message: "TEXT",
     updated_at: "TEXT",
+    ai_enabled: "INTEGER NOT NULL DEFAULT 1",
     contact_name: "TEXT",
     created_at: "TEXT",
   });
@@ -34,6 +35,11 @@ async function migrate() {
     UPDATE conversations
     SET name = COALESCE(name, contact_name, contact_id)
     WHERE name IS NULL
+  `);
+  await run(`
+    UPDATE conversations
+    SET ai_enabled = COALESCE(ai_enabled, 1)
+    WHERE ai_enabled IS NULL
   `);
   await run(`
     UPDATE conversations

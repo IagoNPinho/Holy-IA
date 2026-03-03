@@ -41,6 +41,19 @@ export function ChatArea({ contactName, messages, aiEnabled, onToggleAi, onSendM
   }
 
   const initials = contactName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
+  const groupedMessages = messages.reduce<{ date: string; items: Message[] }[]>((acc, message) => {
+    const date = new Date(message.timestamp).toLocaleDateString("pt-BR")
+    const last = acc[acc.length - 1]
+    if (!last || last.date !== date) {
+      acc.push({ date, items: [message] })
+    } else {
+      last.items.push(message)
+    }
+    return acc
+  }, [])
+
+  const formatTime = (value: string) =>
+    new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -78,53 +91,64 @@ export function ChatArea({ contactName, messages, aiEnabled, onToggleAi, onSendM
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={cn(
-              "flex gap-3 max-w-[80%]",
-              message.sender === "user" || message.sender === "ai" ? "ml-auto flex-row-reverse" : ""
-            )}
-          >
-            <Avatar className="w-8 h-8 flex-shrink-0">
-              <AvatarFallback className={cn(
-                "text-xs",
-                message.sender === "contact" 
-                  ? "bg-accent text-accent-foreground" 
-                  : message.sender === "ai"
-                    ? "bg-success text-success-foreground"
-                    : "bg-primary text-primary-foreground"
-              )}>
-                {message.sender === "contact" ? initials : message.sender === "ai" ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
-              </AvatarFallback>
-            </Avatar>
-            <div className={cn(
-              "rounded-2xl px-4 py-2.5",
-              message.sender === "contact" 
-                ? "bg-card border border-border" 
-                : message.sender === "ai"
-                  ? "bg-success/20 border border-success/30"
-                  : "bg-primary text-primary-foreground"
-            )}>
-              <p className={cn(
-                "text-sm",
-                message.sender === "user" ? "text-primary-foreground" : "text-foreground"
-              )}>
-                {message.content}
-              </p>
-              <div className="flex items-center gap-1.5 mt-1">
-                {message.sender === "ai" && (
-                  <Bot className="w-3 h-3 text-success" />
-                )}
-                <span className={cn(
-                  "text-[10px]",
-                  message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
-                )}>
-                  {message.timestamp}
-                </span>
-              </div>
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {groupedMessages.map((group) => (
+          <div key={group.date} className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded bg-card border border-border">
+                {group.date}
+              </span>
+              <div className="flex-1 h-px bg-border" />
             </div>
+            {group.items.map((message) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "flex gap-3 max-w-[80%]",
+                  message.sender === "user" || message.sender === "ai" ? "ml-auto flex-row-reverse" : ""
+                )}
+              >
+                <Avatar className="w-8 h-8 flex-shrink-0">
+                  <AvatarFallback className={cn(
+                    "text-xs",
+                    message.sender === "contact" 
+                      ? "bg-accent text-accent-foreground" 
+                      : message.sender === "ai"
+                        ? "bg-success text-success-foreground"
+                        : "bg-primary text-primary-foreground"
+                  )}>
+                    {message.sender === "contact" ? initials : message.sender === "ai" ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                  </AvatarFallback>
+                </Avatar>
+                <div className={cn(
+                  "rounded-2xl px-4 py-2.5",
+                  message.sender === "contact" 
+                    ? "bg-card border border-border" 
+                    : message.sender === "ai"
+                      ? "bg-success/20 border border-success/30"
+                      : "bg-primary text-primary-foreground"
+                )}>
+                  <p className={cn(
+                    "text-sm",
+                    message.sender === "user" ? "text-primary-foreground" : "text-foreground"
+                  )}>
+                    {message.content}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {message.sender === "ai" && (
+                      <Bot className="w-3 h-3 text-success" />
+                    )}
+                    <span className={cn(
+                      "text-[10px]",
+                      message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
+                    )}>
+                      {formatTime(message.timestamp)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         ))}
       </div>

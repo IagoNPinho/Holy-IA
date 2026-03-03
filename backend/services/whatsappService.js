@@ -23,17 +23,18 @@ function log(level, message, meta = {}) {
 }
 
 async function ensureConversation(contactId, contactName) {
-  let conversation = await get("SELECT id, contact_id, name FROM conversations WHERE contact_id = ?", [
-    contactId,
-  ]);
+  let conversation = await get(
+    "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
+    [contactId]
+  );
 
   if (!conversation) {
     await run(
-      "INSERT OR IGNORE INTO conversations (contact_id, name, updated_at) VALUES (?, ?, datetime('now'))",
+      "INSERT OR IGNORE INTO conversations (contact_id, name, ai_enabled, updated_at) VALUES (?, ?, 1, datetime('now'))",
       [contactId, contactName || null]
     );
     conversation = await get(
-      "SELECT id, contact_id, name FROM conversations WHERE contact_id = ?",
+      "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
       [contactId]
     );
   }
@@ -172,7 +173,7 @@ async function handleIncomingMessage(message) {
     });
 
     const aiEnabled = await getAiEnabled();
-    if (!aiEnabled) {
+    if (!aiEnabled || conversation?.ai_enabled === 0) {
       log("info", "ai_disabled_skip_reply", { contactId });
       return;
     }
