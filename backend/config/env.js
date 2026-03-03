@@ -18,7 +18,7 @@ const env = {
   WHATSAPP_CLIENT_ID: process.env.WHATSAPP_CLIENT_ID || "holy-ia",
   GROQ_API_KEY: requireEnv("GROQ_API_KEY", "") || process.env.GROQ_API_KEY,
   GROQ_BASE_URL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
-  GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.1-70b-versatile",
+  GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
   AI_DEFAULT_ENABLED: process.env.AI_DEFAULT_ENABLED === "false" ? false : true,
   BULK_MAX_RECIPIENTS: Number(process.env.BULK_MAX_RECIPIENTS || 50),
   BULK_MIN_DELAY_MS: Number(process.env.BULK_MIN_DELAY_MS || 1200),

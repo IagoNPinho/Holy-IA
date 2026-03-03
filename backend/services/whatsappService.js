@@ -4,11 +4,12 @@ const qrcode = require("qrcode-terminal");
 const { env } = require("../config/env");
 const { get, run, all } = require("../database/db");
 const { generateAIResponse } = require("./aiService");
-const { isAiEnabled } = require("../state/systemState");
+const { getAiEnabled } = require("./settingsService");
 
 let client = null;
 let latestQr = null;
 let connectionStatus = "disconnected";
+let messageSchema = null;
 
 function log(level, message, meta = {}) {
   const payload = {
@@ -22,36 +23,83 @@ function log(level, message, meta = {}) {
 }
 
 async function ensureConversation(contactId, contactName) {
-  let conversation = await get(
-    "SELECT id, contact_id, contact_name FROM conversations WHERE contact_id = ?",
-    [contactId]
-  );
+  let conversation = await get("SELECT id, contact_id, name FROM conversations WHERE contact_id = ?", [
+    contactId,
+  ]);
 
   if (!conversation) {
-    const result = await run(
-      "INSERT INTO conversations (contact_id, contact_name) VALUES (?, ?)",
+    await run(
+      "INSERT OR IGNORE INTO conversations (contact_id, name, updated_at) VALUES (?, ?, datetime('now'))",
       [contactId, contactName || null]
     );
-    conversation = { id: result.lastID, contact_id: contactId, contact_name: contactName || null };
+    conversation = await get(
+      "SELECT id, contact_id, name FROM conversations WHERE contact_id = ?",
+      [contactId]
+    );
+  }
+
+  if (conversation && !conversation.name && contactName) {
+    await run("UPDATE conversations SET name = ?, updated_at = datetime('now') WHERE id = ?", [
+      contactName,
+      conversation.id,
+    ]);
+    conversation.name = contactName;
   }
 
   return conversation;
 }
 
-async function saveMessage({ conversationId, direction, body, messageId, fromNumber, toNumber }) {
+async function loadMessageSchema() {
+  if (messageSchema) return messageSchema;
+  const rows = await all(`PRAGMA table_info(messages)`);
+  const direction = rows.find((row) => row.name === "direction");
+  const fromMe = rows.find((row) => row.name === "from_me");
+  messageSchema = {
+    hasDirection: Boolean(direction),
+    directionNotNull: Boolean(direction && direction.notnull),
+    hasFromMe: Boolean(fromMe),
+  };
+  return messageSchema;
+}
+
+async function saveMessage({ conversationId, fromMe, body, timestamp }) {
+  const schema = await loadMessageSchema();
+  const direction = fromMe ? "out" : "in";
+  if (schema.hasDirection && schema.hasFromMe) {
+    await run(
+      `
+      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction)
+      VALUES (?, ?, ?, ?, ?)
+      `,
+      [conversationId, fromMe ? 1 : 0, body, timestamp || new Date().toISOString(), direction]
+    );
+    return;
+  }
+
+  if (schema.hasDirection) {
+    await run(
+      `
+      INSERT INTO messages (conversation_id, body, timestamp, direction)
+      VALUES (?, ?, ?, ?)
+      `,
+      [conversationId, body, timestamp || new Date().toISOString(), direction]
+    );
+    return;
+  }
+
   await run(
     `
-    INSERT INTO messages (conversation_id, direction, body, message_id, from_number, to_number)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (conversation_id, from_me, body, timestamp)
+    VALUES (?, ?, ?, ?)
     `,
-    [conversationId, direction, body, messageId || null, fromNumber || null, toNumber || null]
+    [conversationId, fromMe ? 1 : 0, body, timestamp || new Date().toISOString()]
   );
 }
 
 async function buildHistory(conversationId, limit = 8) {
   const rows = await all(
     `
-    SELECT direction, body
+    SELECT from_me, body
     FROM messages
     WHERE conversation_id = ?
     ORDER BY id DESC
@@ -63,29 +111,68 @@ async function buildHistory(conversationId, limit = 8) {
   return rows
     .reverse()
     .map((row) => ({
-      role: row.direction === "out" ? "assistant" : "user",
+      role: row.from_me ? "assistant" : "user",
       content: row.body,
     }));
+}
+
+async function updateConversation({ id, name, lastMessage }) {
+  await run(
+    `
+    UPDATE conversations
+    SET name = COALESCE(?, name),
+        last_message = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+    `,
+    [name || null, lastMessage || null, id]
+  );
+}
+
+async function saveAiLog({ conversationId, prompt, response }) {
+  await run(
+    `
+    INSERT INTO ai_logs (conversation_id, prompt, response)
+    VALUES (?, ?, ?)
+    `,
+    [conversationId, prompt, response]
+  );
 }
 
 async function handleIncomingMessage(message) {
   try {
     const contact = await message.getContact();
     const contactId = message.from;
+    if (
+      contactId === "status@broadcast" ||
+      contactId?.includes("@newsletter") ||
+      contactId?.includes("@g.us") ||
+      contactId?.includes("@lid")
+    ) {
+      log("info", "skip_broadcast_message", { contactId });
+      return;
+    }
     const contactName = contact?.pushname || contact?.name || contactId;
 
     const conversation = await ensureConversation(contactId, contactName);
+    const timestamp = message.timestamp
+      ? new Date(message.timestamp * 1000).toISOString()
+      : new Date().toISOString();
 
     await saveMessage({
       conversationId: conversation.id,
-      direction: "in",
+      fromMe: false,
       body: message.body,
-      messageId: message.id?.id,
-      fromNumber: contactId,
-      toNumber: message.to,
+      timestamp,
+    });
+    await updateConversation({
+      id: conversation.id,
+      name: contactName,
+      lastMessage: message.body,
     });
 
-    if (!isAiEnabled()) {
+    const aiEnabled = await getAiEnabled();
+    if (!aiEnabled) {
       log("info", "ai_disabled_skip_reply", { contactId });
       return;
     }
@@ -95,11 +182,19 @@ async function handleIncomingMessage(message) {
     await client.sendMessage(contactId, reply);
     await saveMessage({
       conversationId: conversation.id,
-      direction: "out",
+      fromMe: true,
       body: reply,
-      messageId: null,
-      fromNumber: message.to,
-      toNumber: contactId,
+      timestamp: new Date().toISOString(),
+    });
+    await updateConversation({
+      id: conversation.id,
+      name: contactName,
+      lastMessage: reply,
+    });
+    await saveAiLog({
+      conversationId: conversation.id,
+      prompt: message.body,
+      response: reply,
     });
   } catch (error) {
     log("error", "message_handling_failed", { error: error?.message });
@@ -116,7 +211,7 @@ async function initWhatsappClient() {
 
   client.on("qr", (qr) => {
     latestQr = qr;
-    connectionStatus = "qr";
+    connectionStatus = "not_authenticated";
     log("info", "whatsapp_qr_received");
     qrcode.generate(qr, { small: true });
   });
@@ -132,7 +227,7 @@ async function initWhatsappClient() {
   });
 
   client.on("auth_failure", (msg) => {
-    connectionStatus = "auth_failure";
+    connectionStatus = "not_authenticated";
     log("error", "whatsapp_auth_failure", { message: msg });
   });
 
@@ -158,17 +253,44 @@ function getConnectionStatus() {
   return connectionStatus;
 }
 
+function getStatus() {
+  return connectionStatus;
+}
+
+async function disconnect() {
+  if (!client) {
+    connectionStatus = "disconnected";
+    return { status: connectionStatus };
+  }
+  try {
+    await client.logout();
+  } catch (error) {
+    log("warn", "whatsapp_logout_failed", { error: error?.message });
+  }
+  try {
+    await client.destroy();
+  } catch (error) {
+    log("warn", "whatsapp_destroy_failed", { error: error?.message });
+  }
+  latestQr = null;
+  connectionStatus = "disconnected";
+  return { status: connectionStatus };
+}
+
 async function sendManualMessage({ to, body }) {
   if (!client) throw new Error("WhatsApp client not initialized");
   const convo = await ensureConversation(to, to);
   await client.sendMessage(to, body);
   await saveMessage({
     conversationId: convo.id,
-    direction: "out",
+    fromMe: true,
     body,
-    messageId: null,
-    fromNumber: null,
-    toNumber: to,
+    timestamp: new Date().toISOString(),
+  });
+  await updateConversation({
+    id: convo.id,
+    name: convo.name || to,
+    lastMessage: body,
   });
 }
 
@@ -216,6 +338,8 @@ module.exports = {
   getWhatsappClient,
   getLatestQr,
   getConnectionStatus,
+  getStatus,
+  disconnect,
   sendManualMessage,
   sendBulk,
   scheduleSend,

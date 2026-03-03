@@ -1,19 +1,7 @@
 // In-memory system state (MVP).
-const { env } = require("../config/env");
-
 const state = {
-  aiEnabled: env.AI_DEFAULT_ENABLED,
   scheduledJobs: new Map(),
 };
-
-function isAiEnabled() {
-  return state.aiEnabled;
-}
-
-function setAiEnabled(value) {
-  state.aiEnabled = Boolean(value);
-  return state.aiEnabled;
-}
 
 function addJob(id, job) {
   state.scheduledJobs.set(id, job);
@@ -28,8 +16,6 @@ function listJobs() {
 }
 
 module.exports = {
-  isAiEnabled,
-  setAiEnabled,
   addJob,
   removeJob,
   listJobs,

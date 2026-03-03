@@ -9,6 +9,7 @@ const { conversationsRouter } = require("./routes/conversations");
 const { settingsRouter } = require("./routes/settings");
 const { toggleRouter } = require("./routes/toggle");
 const { whatsappRouter } = require("./routes/whatsapp");
+const { aiRouter } = require("./routes/ai");
 const { authRouter } = require("./routes/auth");
 const { authRequired } = require("./middleware/auth");
 
@@ -57,6 +58,7 @@ app.use(conversationsRouter);
 app.use(settingsRouter);
 app.use(toggleRouter);
 app.use(whatsappRouter);
+app.use(aiRouter);
 
 // Global error handler.
 // eslint-disable-next-line no-unused-vars

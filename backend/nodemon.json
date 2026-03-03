@@ -1,0 +1,18 @@
+{
+  "watch": [
+    "server.js",
+    "controllers",
+    "routes",
+    "services",
+    "database",
+    "config",
+    "state"
+  ],
+  "ignore": [
+    "node_modules",
+    ".wwebjs_auth",
+    "*.sqlite",
+    "*.db"
+  ],
+  "ext": "js,json"
+}

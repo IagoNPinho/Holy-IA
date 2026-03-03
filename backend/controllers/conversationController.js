@@ -9,24 +9,29 @@ async function listConversations(_req, res, next) {
       SELECT
         c.id,
         c.contact_id,
-        c.contact_name,
-        c.created_at,
-        (
-          SELECT body
-          FROM messages m
-          WHERE m.conversation_id = c.id
-          ORDER BY m.id DESC
-          LIMIT 1
+        COALESCE(c.name, c.contact_name, c.contact_id) AS name,
+        COALESCE(
+          c.last_message,
+          (
+            SELECT m.body
+            FROM messages m
+            WHERE m.conversation_id = c.id
+            ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
+            LIMIT 1
+          )
         ) AS last_message,
-        (
-          SELECT created_at
-          FROM messages m
-          WHERE m.conversation_id = c.id
-          ORDER BY m.id DESC
-          LIMIT 1
-        ) AS last_message_at
+        COALESCE(
+          c.updated_at,
+          (
+            SELECT COALESCE(m.timestamp, m.created_at)
+            FROM messages m
+            WHERE m.conversation_id = c.id
+            ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
+            LIMIT 1
+          )
+        ) AS updated_at
       FROM conversations c
-      ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+      ORDER BY updated_at IS NULL, updated_at DESC
       `
     );
     res.json({ data: conversations });
@@ -40,7 +45,11 @@ async function listMessages(req, res, next) {
     const { conversationId } = req.params;
     const messages = await all(
       `
-      SELECT id, direction, body, message_id, from_number, to_number, created_at
+      SELECT
+        id,
+        COALESCE(from_me, CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS from_me,
+        body,
+        COALESCE(timestamp, created_at) AS timestamp
       FROM messages
       WHERE conversation_id = ?
       ORDER BY id ASC

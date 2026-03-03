@@ -1,12 +1,16 @@
 // Settings and automation endpoints.
-const { isAiEnabled, setAiEnabled, addJob, removeJob, listJobs } = require("../state/systemState");
+const { addJob, removeJob, listJobs } = require("../state/systemState");
 const { get, run } = require("../database/db");
+const { getAiEnabled, setAiEnabled } = require("../services/settingsService");
 const { sendBulk, scheduleSend } = require("../services/whatsappService");
 
 async function getSettings(_req, res) {
-  const row = await get("SELECT clinic_name, voice_tone, procedures, working_hours, confirmation_message FROM clinic_settings WHERE id = 1");
+  const row = await get(
+    "SELECT clinic_name, voice_tone, procedures, working_hours, confirmation_message, ai_enabled FROM clinic_settings WHERE id = 1"
+  );
+  const aiEnabled = await getAiEnabled();
   res.json({
-    aiEnabled: isAiEnabled(),
+    aiEnabled,
     scheduledJobs: listJobs(),
     clinicSettings: {
       clinicName: row?.clinic_name || "",
@@ -20,7 +24,7 @@ async function getSettings(_req, res) {
 
 async function toggleAi(req, res) {
   const { enabled } = req.body || {};
-  const newValue = setAiEnabled(enabled);
+  const newValue = await setAiEnabled(enabled);
   res.json({ aiEnabled: newValue });
 }
 
