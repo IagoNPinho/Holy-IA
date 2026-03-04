@@ -32,7 +32,6 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
   const [conversationsOffset, setConversationsOffset] = useState<number>(0)
-  const [conversationsHasMore, setConversationsHasMore] = useState<boolean>(true)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [whatsappStatus, setWhatsappStatus] = useState<string>("disconnected")
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -96,7 +95,6 @@ export default function DashboardPage() {
         }))
         setConversations(mapped)
         setConversationsOffset(0)
-        setConversationsHasMore(res.data.length === 20)
         setConversationsError(null)
       } catch (err) {
         setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
@@ -112,7 +110,7 @@ export default function DashboardPage() {
   }, [])
 
   const handleLoadMore = async () => {
-    if (isLoadingMore || !conversationsHasMore) return
+    if (isLoadingMore) return
     const nextOffset = conversationsOffset + 20
     setIsLoadingMore(true)
     try {
@@ -130,7 +128,6 @@ export default function DashboardPage() {
       }))
       setConversations(prev => [...prev, ...mapped])
       setConversationsOffset(nextOffset)
-      setConversationsHasMore(res.data.length === 20)
     } catch (err) {
       console.error(err)
     } finally {
@@ -276,7 +273,7 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               onClick={handleLoadMore}
-              disabled={!conversationsHasMore || isLoadingMore}
+              disabled={isLoadingMore}
               className="w-full"
             >
               {isLoadingMore ? "Carregando..." : "Carregar mais"}

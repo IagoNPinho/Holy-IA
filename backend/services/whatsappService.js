@@ -173,7 +173,11 @@ async function handleIncomingMessage(message) {
     });
 
     const aiEnabled = await getAiEnabled();
-    if (!aiEnabled || conversation?.ai_enabled === 0) {
+    if (conversation?.ai_enabled === 0) {
+      log("info", "ai_disabled_for_conversation", { contactId, conversationId: conversation?.id });
+      return;
+    }
+    if (conversation?.ai_enabled == null && !aiEnabled) {
       log("info", "ai_disabled_skip_reply", { contactId });
       return;
     }
