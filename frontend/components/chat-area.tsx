@@ -156,7 +156,7 @@ export function ChatArea({
                       : "bg-primary text-primary-foreground"
                 )}>
                   <p className={cn(
-                    "text-sm",
+                    "text-sm break-words whitespace-pre-wrap",
                     message.sender === "user" ? "text-primary-foreground" : "text-foreground"
                   )}>
                     {message.content}
