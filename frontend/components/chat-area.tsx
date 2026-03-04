@@ -13,6 +13,7 @@ export interface Message {
   content: string
   sender: "user" | "contact" | "ai"
   timestamp: string
+  messageType?: "incoming" | "manual" | "ai" | null
 }
 
 interface ChatAreaProps {
@@ -162,7 +163,7 @@ export function ChatArea({
                     {message.content}
                   </p>
                   <div className="flex items-center gap-1.5 mt-1">
-                    {message.sender === "ai" && (
+                    {message.messageType === "ai" && (
                       <Bot className="w-3 h-3 text-success" />
                     )}
                     <span className={cn(
@@ -180,7 +181,7 @@ export function ChatArea({
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-border bg-card">
+      <div className="p-4 border-t border-border bg-card sticky bottom-0">
         <div className="flex items-center gap-3">
           <Input
             placeholder="Digite sua mensagem..."

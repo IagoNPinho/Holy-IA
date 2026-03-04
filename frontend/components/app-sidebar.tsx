@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils"
 import { LayoutDashboard, Settings, LogOut, MessageSquare, BarChart3, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { request } from "@/lib/api"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { Switch } from "@/components/ui/switch"
 
 const navigation = [
   { name: "Conversas", href: "/dashboard", icon: LayoutDashboard },
@@ -18,10 +19,39 @@ export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const [disconnecting, setDisconnecting] = useState(false)
+  const [aiGlobalEnabled, setAiGlobalEnabled] = useState(true)
+  const [loadingAiGlobal, setLoadingAiGlobal] = useState(false)
 
   const handleLogout = () => {
     window.localStorage.removeItem("auth_token")
     router.push("/login")
+  }
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await request<{ aiEnabledGlobal?: boolean }>("/settings")
+        setAiGlobalEnabled(Boolean(res.aiEnabledGlobal))
+      } catch (error) {
+        console.error(error)
+      }
+    }
+    load()
+  }, [])
+
+  const handleToggleAiGlobal = async (enabled: boolean) => {
+    setLoadingAiGlobal(true)
+    try {
+      await request("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ aiEnabledGlobal: enabled }),
+      })
+      setAiGlobalEnabled(enabled)
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setLoadingAiGlobal(false)
+    }
   }
 
   const handleDisconnect = async () => {
@@ -68,7 +98,16 @@ export function AppSidebar() {
         })}
       </nav>
 
-      <div className="px-3 py-4 border-t border-sidebar-border space-y-2">
+      <div className="px-3 py-4 border-t border-sidebar-border space-y-4">
+        <div className="flex items-center justify-between px-2">
+          <span className="text-xs text-muted-foreground">IA Global</span>
+          <Switch
+            checked={aiGlobalEnabled}
+            onCheckedChange={handleToggleAiGlobal}
+            disabled={loadingAiGlobal}
+            className="data-[state=checked]:bg-success"
+          />
+        </div>
         <Button
           variant="ghost"
           onClick={handleDisconnect}

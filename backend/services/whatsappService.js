@@ -55,24 +55,45 @@ async function loadMessageSchema() {
   const rows = await all(`PRAGMA table_info(messages)`);
   const direction = rows.find((row) => row.name === "direction");
   const fromMe = rows.find((row) => row.name === "from_me");
+  const messageType = rows.find((row) => row.name === "message_type");
   messageSchema = {
     hasDirection: Boolean(direction),
     directionNotNull: Boolean(direction && direction.notnull),
     hasFromMe: Boolean(fromMe),
+    hasMessageType: Boolean(messageType),
   };
   return messageSchema;
 }
 
-async function saveMessage({ conversationId, fromMe, body, timestamp }) {
+async function saveMessage({ conversationId, fromMe, body, timestamp, messageType }) {
   const schema = await loadMessageSchema();
   const direction = fromMe ? "out" : "in";
-  if (schema.hasDirection && schema.hasFromMe) {
+  const finalType = messageType || (fromMe ? "manual" : "incoming");
+  if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
     await run(
       `
-      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction)
+      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type)
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [
+        conversationId,
+        fromMe ? 1 : 0,
+        body,
+        timestamp || new Date().toISOString(),
+        direction,
+        finalType,
+      ]
+    );
+    return;
+  }
+
+  if (schema.hasDirection && schema.hasMessageType) {
+    await run(
+      `
+      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type)
       VALUES (?, ?, ?, ?, ?)
       `,
-      [conversationId, fromMe ? 1 : 0, body, timestamp || new Date().toISOString(), direction]
+      [conversationId, body, timestamp || new Date().toISOString(), direction, finalType]
     );
     return;
   }
@@ -165,6 +186,7 @@ async function handleIncomingMessage(message) {
       fromMe: false,
       body: message.body,
       timestamp,
+      messageType: "incoming",
     });
     await updateConversation({
       id: conversation.id,
@@ -195,6 +217,7 @@ async function handleIncomingMessage(message) {
       fromMe: true,
       body: reply,
       timestamp: new Date().toISOString(),
+      messageType: "ai",
     });
     await updateConversation({
       id: conversation.id,
@@ -309,6 +332,7 @@ async function sendManualMessage({ to, body }) {
     fromMe: true,
     body,
     timestamp: new Date().toISOString(),
+    messageType: "manual",
   });
   await updateConversation({
     id: convo.id,

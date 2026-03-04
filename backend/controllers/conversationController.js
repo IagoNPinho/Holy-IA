@@ -11,9 +11,9 @@ async function listConversations(req, res, next) {
       `
       SELECT
         c.id,
-        c.contact_id,
         COALESCE(c.name, c.contact_name, c.contact_id) AS name,
         COALESCE(c.ai_enabled, 1) AS ai_enabled,
+        COALESCE(c.unread_count, 0) AS unread_count,
         COALESCE(
           c.last_message,
           (
@@ -50,18 +50,23 @@ async function listConversations(req, res, next) {
 async function listMessages(req, res, next) {
   try {
     const { conversationId } = req.params;
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 500);
+    const before = req.query.before;
     const messages = await all(
       `
       SELECT
         id,
         COALESCE(from_me, CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS from_me,
         body,
-        COALESCE(timestamp, created_at) AS timestamp
+        COALESCE(timestamp, created_at) AS timestamp,
+        message_type
       FROM messages
       WHERE conversation_id = ?
-      ORDER BY id ASC
+      ${before ? "AND COALESCE(timestamp, created_at) < ?" : ""}
+      ORDER BY COALESCE(timestamp, created_at) DESC
+      LIMIT ?
       `,
-      [conversationId]
+      before ? [conversationId, before, limit] : [conversationId, limit]
     );
     res.json({ data: messages });
   } catch (error) {
@@ -71,14 +76,25 @@ async function listMessages(req, res, next) {
 
 async function sendManual(req, res, next) {
   try {
-    const { to, body } = req.body || {};
-    if (!to || typeof to !== "string") {
+    const { to, body, conversationId } = req.body || {};
+    if (!conversationId && (!to || typeof to !== "string")) {
       return res.status(400).json({ error: "Destinatario obrigatorio." });
     }
     if (!body || typeof body !== "string") {
       return res.status(400).json({ error: "Mensagem obrigatoria." });
     }
-    await sendManualMessage({ to, body });
+    let target = to;
+    if (conversationId) {
+      const rows = await all(
+        "SELECT contact_id FROM conversations WHERE id = ? LIMIT 1",
+        [conversationId]
+      );
+      target = rows?.[0]?.contact_id;
+    }
+    if (!target) {
+      return res.status(404).json({ error: "Conversa nao encontrada." });
+    }
+    await sendManualMessage({ to: target, body });
     return res.json({ ok: true });
   } catch (error) {
     return next(error);

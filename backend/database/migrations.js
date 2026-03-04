@@ -27,6 +27,7 @@ async function migrate() {
     last_message: "TEXT",
     updated_at: "TEXT",
     ai_enabled: "INTEGER NOT NULL DEFAULT 1",
+    unread_count: "INTEGER NOT NULL DEFAULT 0",
     contact_name: "TEXT",
     created_at: "TEXT",
   });
@@ -40,6 +41,11 @@ async function migrate() {
     UPDATE conversations
     SET ai_enabled = COALESCE(ai_enabled, 1)
     WHERE ai_enabled IS NULL
+  `);
+  await run(`
+    UPDATE conversations
+    SET unread_count = COALESCE(unread_count, 0)
+    WHERE unread_count IS NULL
   `);
   await run(`
     UPDATE conversations
@@ -69,6 +75,7 @@ async function migrate() {
     timestamp: "TEXT",
     direction: "TEXT",
     created_at: "TEXT",
+    message_type: "TEXT DEFAULT 'incoming'",
   });
 
   const messageColumns = await all(`PRAGMA table_info(messages)`);
@@ -98,6 +105,9 @@ async function migrate() {
 
   await run(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`);
+  await run(
+    `CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp ON messages(conversation_id, timestamp DESC)`
+  );
 
   await run(`
     CREATE TABLE IF NOT EXISTS clinic_settings (

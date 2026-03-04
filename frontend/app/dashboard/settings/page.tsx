@@ -110,26 +110,6 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="aiEnabledGlobal" className="text-foreground">IA Global</Label>
-              <Select
-                value={settings.aiEnabledGlobal ? "enabled" : "disabled"}
-                onValueChange={(value) =>
-                  setSettings(prev => ({ ...prev, aiEnabledGlobal: value === "enabled" }))
-                }
-              >
-                <SelectTrigger className="bg-input border-border text-foreground">
-                  <SelectValue placeholder="Selecione o status" />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  <SelectItem value="enabled">Ativada</SelectItem>
-                  <SelectItem value="disabled">Desativada</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Quando desativada, a IA não responderá automaticamente.
-              </p>
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="voiceTone" className="text-foreground">Tom de Voz</Label>
               <Select 
                 value={settings.tone} 

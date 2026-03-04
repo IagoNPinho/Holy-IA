@@ -97,7 +97,16 @@ async function updateClinicSettings(req, res, next) {
   try {
     const { clinicName, tone, voiceTone, procedures, workingHours, confirmationMessage, aiEnabledGlobal, aiBlocklist } =
       req.body || {};
-    const finalTone = tone || voiceTone || "professional";
+    const current = await get(
+      "SELECT clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message, ai_enabled_global FROM clinic_settings WHERE id = 1"
+    );
+    const finalTone = tone || voiceTone || current?.tone || current?.voice_tone || "professional";
+    const finalClinicName = clinicName ?? current?.clinic_name ?? "";
+    const finalProcedures = procedures ?? current?.procedures ?? "";
+    const finalWorkingHours = workingHours ?? current?.working_hours ?? "";
+    const finalConfirmation = confirmationMessage ?? current?.confirmation_message ?? "";
+    const finalAiEnabledGlobal =
+      aiEnabledGlobal !== undefined ? (aiEnabledGlobal ? 1 : 0) : current?.ai_enabled_global ?? 1;
     await run(
       `
       UPDATE clinic_settings
@@ -105,13 +114,13 @@ async function updateClinicSettings(req, res, next) {
       WHERE id = 1
       `,
       [
-        clinicName || "",
+        finalClinicName,
         finalTone,
         finalTone,
-        procedures || "",
-        workingHours || "",
-        confirmationMessage || "",
-        aiEnabledGlobal ? 1 : 0,
+        finalProcedures,
+        finalWorkingHours,
+        finalConfirmation,
+        finalAiEnabledGlobal,
       ]
     );
     if (Array.isArray(aiBlocklist)) {

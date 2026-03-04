@@ -31,7 +31,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
   return (
     <div className="flex flex-col h-full border-r border-border bg-card">
       {/* Search Header */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border sticky top-0 z-10 bg-inherit">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
@@ -42,7 +42,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
       </div>
 
       {/* Conversations */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto h-full">
         {conversations.map((conversation) => (
           <button
             key={conversation.id}

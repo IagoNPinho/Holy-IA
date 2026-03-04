@@ -6,23 +6,24 @@ import { ConversationList, type Conversation } from "@/components/conversation-l
 import { ChatArea, type Message } from "@/components/chat-area"
 import { EmptyChat } from "@/components/empty-chat"
 import { Button } from "@/components/ui/button"
-import { API_BASE, request } from "@/lib/api"
+import { request } from "@/lib/api"
 import QRCode from "qrcode"
 
 type ConversationApi = {
   id: number
-  contact_id: string
   name: string | null
   ai_enabled: number | null
+  unread_count?: number | null
   last_message: string | null
   updated_at: string | null
 }
 
 type MessageApi = {
   id: number
-  from_me: number
+  from_me?: number
   body: string
   timestamp: string
+  message_type?: "incoming" | "manual" | "ai" | null
 }
 
 export default function DashboardPage() {
@@ -94,15 +95,14 @@ export default function DashboardPage() {
           "/conversations?limit=20&offset=0"
         )
         if (!isActive) return
-          const mapped = res.data.map(item => ({
-            id: String(item.id),
-            contactId: item.contact_id,
-            contactName: item.name || item.contact_id,
-            lastMessage: item.last_message || "",
-            timestamp: item.updated_at || "",
-            unread: false,
-            aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-          }))
+        const mapped = res.data.map(item => ({
+          id: String(item.id),
+          contactName: item.name || "",
+          lastMessage: item.last_message || "",
+          timestamp: item.updated_at || "",
+          unread: false,
+          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+        }))
         setConversations(mapped)
         setConversationsOffset(mapped.length)
         setConversationsError(null)
@@ -129,8 +129,7 @@ export default function DashboardPage() {
       )
       const mapped = res.data.map(item => ({
         id: String(item.id),
-        contactId: item.contact_id,
-        contactName: item.name || item.contact_id,
+        contactName: item.name || "",
         lastMessage: item.last_message || "",
         timestamp: item.updated_at || "",
         unread: false,
@@ -149,13 +148,22 @@ export default function DashboardPage() {
     const loadMessages = async () => {
       if (!selectedId) return
       try {
-        const res = await request<{ data: MessageApi[] }>(`/messages/${selectedId}`)
-        const mapped: Message[] = res.data.map(item => ({
-          id: String(item.id),
-          content: item.body,
-          sender: item.from_me ? "ai" : "contact",
-          timestamp: item.timestamp,
-        }))
+        const res = await request<{ data: MessageApi[] }>(`/messages/${selectedId}?limit=100`)
+        const mapped: Message[] = res.data
+          .slice()
+          .reverse()
+          .map(item => ({
+            id: String(item.id),
+            content: item.body,
+            sender:
+              item.message_type === "ai"
+                ? "ai"
+                : item.message_type === "manual"
+                  ? "user"
+                  : "contact",
+            timestamp: item.timestamp,
+            messageType: item.message_type || null,
+          }))
         setMessages(prev => ({ ...prev, [selectedId]: mapped }))
       } catch (err) {
         console.error(err)
@@ -199,15 +207,26 @@ export default function DashboardPage() {
     try {
       await request<{ ok: boolean }>("/messages/send", {
         method: "POST",
-        body: JSON.stringify({ to: selectedConversation.contactId || selectedConversation.contactName, body: content }),
+        body: JSON.stringify({ conversationId: selectedConversation.id, body: content }),
       })
-      const res = await request<{ data: MessageApi[] }>(`/messages/${selectedConversation.id}`)
-      const mapped: Message[] = res.data.map(item => ({
-        id: String(item.id),
-        content: item.body,
-        sender: item.from_me ? "ai" : "contact",
-        timestamp: item.timestamp,
-      }))
+      const res = await request<{ data: MessageApi[] }>(
+        `/messages/${selectedConversation.id}?limit=100`
+      )
+      const mapped: Message[] = res.data
+        .slice()
+        .reverse()
+        .map(item => ({
+          id: String(item.id),
+          content: item.body,
+          sender:
+            item.message_type === "ai"
+              ? "ai"
+              : item.message_type === "manual"
+                ? "user"
+                : "contact",
+          timestamp: item.timestamp,
+          messageType: item.message_type || null,
+        }))
       setMessages(prev => ({ ...prev, [selectedConversation.id]: mapped }))
     } catch (err) {
       console.error(err)
@@ -299,21 +318,11 @@ export default function DashboardPage() {
           mobileView === "list" ? "hidden md:flex" : "flex"
         )}
       >
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
-          <div className="text-sm text-muted-foreground">
-            {isLoading ? "Carregando..." : `API: ${API_BASE}`}
-          </div>
+        <div className="flex items-center justify-end px-6 py-3 border-b border-border bg-card">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               IA: {aiEnabled ? "Ativada" : "Desativada"}
             </span>
-            {whatsappStatus === "ready" && (
-              <>
-                <span className="text-xs text-success font-medium">
-                  WhatsApp conectado
-                </span>
-              </>
-            )}
             {whatsappStatus === "not_authenticated" && (
               <Button variant="outline" onClick={handleOpenQr}>
                 Conectar WhatsApp
