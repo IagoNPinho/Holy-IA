@@ -94,7 +94,7 @@ export default function DashboardPage() {
           aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
         }))
         setConversations(mapped)
-        setConversationsOffset(0)
+        setConversationsOffset(mapped.length)
         setConversationsError(null)
       } catch (err) {
         setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
@@ -111,7 +111,7 @@ export default function DashboardPage() {
 
   const handleLoadMore = async () => {
     if (isLoadingMore) return
-    const nextOffset = conversationsOffset + 20
+    const nextOffset = conversations.length
     setIsLoadingMore(true)
     try {
       const res = await request<{ data: ConversationApi[] }>(
@@ -127,7 +127,7 @@ export default function DashboardPage() {
         aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
       }))
       setConversations(prev => [...prev, ...mapped])
-      setConversationsOffset(nextOffset)
+      setConversationsOffset(nextOffset + mapped.length)
     } catch (err) {
       console.error(err)
     } finally {
