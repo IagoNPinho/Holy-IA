@@ -172,6 +172,11 @@ async function handleIncomingMessage(message) {
       lastMessage: message.body,
     });
 
+    const block = await get("SELECT contact_id FROM ai_blocklist WHERE contact_id = ?", [contactId]);
+    if (block) {
+      log("info", "ai_blocked_contact", { contactId });
+      return;
+    }
     const aiEnabled = await getAiEnabled();
     if (conversation?.ai_enabled === 0) {
       log("info", "ai_disabled_for_conversation", { contactId, conversationId: conversation?.id });
@@ -224,6 +229,19 @@ async function initWhatsappClient() {
   client.on("ready", () => {
     connectionStatus = "ready";
     log("info", "whatsapp_ready");
+    syncInitialChats(client)
+      .then(async (result) => {
+        const { getConversationCount } = require("../database/db");
+        const total = await getConversationCount();
+        console.info("whatsapp_sync_result", {
+          chats_found: result.chatsFound,
+          chats_saved: result.chatsSaved,
+          total_in_db: total,
+        });
+      })
+      .catch((error) => {
+        log("error", "whatsapp_sync_failed", { error: error?.message });
+      });
   });
 
   client.on("authenticated", () => {
@@ -338,6 +356,36 @@ function scheduleSend({ id, to, body, sendAt, onScheduled }) {
   return timer;
 }
 
+async function syncInitialChats(clientInstance) {
+  const activeClient = clientInstance || client;
+  if (!activeClient) {
+    throw new Error("WhatsApp client not initialized");
+  }
+
+  const chats = await activeClient.getChats();
+  const directChats = chats.filter((chat) => !chat.isGroup);
+  let chatsSaved = 0;
+
+  for (const chat of directChats) {
+    const contactId = chat.id?._serialized || chat.id?.user || chat.id;
+    const name = chat.name || chat.pushname || chat.id?.user || contactId;
+    const timestamp = chat.timestamp || chat.lastMessage?.timestamp;
+    const updatedAt = timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
+    const lastMessage = chat.lastMessage?.body || "";
+
+    const result = await run(
+      `
+      INSERT OR IGNORE INTO conversations (contact_id, name, last_message, updated_at, ai_enabled)
+      VALUES (?, ?, ?, ?, 1)
+      `,
+      [contactId, name, lastMessage, updatedAt]
+    );
+    if (result?.changes) chatsSaved += 1;
+  }
+
+  return { chatsFound: directChats.length, chatsSaved };
+}
+
 module.exports = {
   initWhatsappClient,
   getWhatsappClient,
@@ -348,4 +396,5 @@ module.exports = {
   sendManualMessage,
   sendBulk,
   scheduleSend,
+  syncInitialChats,
 };

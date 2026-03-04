@@ -6,6 +6,7 @@ async function listConversations(req, res, next) {
   try {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
     const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
+    console.info("conversations_query_params", { limit, offset });
     const conversations = await all(
       `
       SELECT
@@ -39,6 +40,7 @@ async function listConversations(req, res, next) {
       `,
       [limit, offset]
     );
+    console.info("conversations_query_result", { returned: conversations.length });
     res.json({ data: conversations });
   } catch (error) {
     next(error);

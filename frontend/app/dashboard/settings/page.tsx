@@ -22,13 +22,23 @@ export default function SettingsPage() {
     procedures: "",
     workingHours: "",
     confirmationMessage: "",
+    aiEnabledGlobal: true,
+    aiBlocklist: [] as string[],
   })
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await request<{ clinicSettings: typeof settings }>("/settings")
-        setSettings(res.clinicSettings)
+        const res = await request<{
+          clinicSettings: typeof settings
+          aiEnabledGlobal: boolean
+          aiBlocklist: string[]
+        }>("/settings")
+        setSettings({
+          ...res.clinicSettings,
+          aiEnabledGlobal: res.aiEnabledGlobal ?? true,
+          aiBlocklist: res.aiBlocklist || [],
+        })
       } catch (err) {
         console.error(err)
       }
@@ -100,6 +110,26 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
+              <Label htmlFor="aiEnabledGlobal" className="text-foreground">IA Global</Label>
+              <Select
+                value={settings.aiEnabledGlobal ? "enabled" : "disabled"}
+                onValueChange={(value) =>
+                  setSettings(prev => ({ ...prev, aiEnabledGlobal: value === "enabled" }))
+                }
+              >
+                <SelectTrigger className="bg-input border-border text-foreground">
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  <SelectItem value="enabled">Ativada</SelectItem>
+                  <SelectItem value="disabled">Desativada</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Quando desativada, a IA não responderá automaticamente.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="voiceTone" className="text-foreground">Tom de Voz</Label>
               <Select 
                 value={settings.tone} 
@@ -129,6 +159,37 @@ export default function SettingsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Informe os procedimentos para que a IA possa orientar os pacientes corretamente.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-muted-foreground" />
+              <CardTitle className="text-foreground">Bloqueios da IA</CardTitle>
+            </div>
+            <CardDescription>Contatos que não devem receber respostas automáticas</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="aiBlocklist" className="text-foreground">Lista de bloqueio</Label>
+              <Textarea
+                id="aiBlocklist"
+                value={settings.aiBlocklist.join("\n")}
+                onChange={(e) =>
+                  setSettings(prev => ({
+                    ...prev,
+                    aiBlocklist: e.target.value.split("\n").map((value) => value.trim()).filter(Boolean),
+                  }))
+                }
+                placeholder="Informe um contato por linha (ex: 5585999999999@c.us)"
+                rows={4}
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground resize-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use o identificador completo do contato (ex: @c.us).
               </p>
             </div>
           </CardContent>

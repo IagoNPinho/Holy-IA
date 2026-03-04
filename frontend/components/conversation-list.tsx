@@ -22,6 +22,12 @@ interface ConversationListProps {
 }
 
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
+  const formatTimestamp = (value: string) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  };
   return (
     <div className="flex flex-col h-full border-r border-border bg-card">
       {/* Search Header */}
@@ -62,7 +68,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
                   {conversation.contactName}
                 </span>
                 <span className="text-xs text-muted-foreground flex-shrink-0">
-                  {conversation.timestamp}
+                  {formatTimestamp(conversation.timestamp)}
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">

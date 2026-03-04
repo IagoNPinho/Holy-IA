@@ -38,4 +38,9 @@ function all(sql, params = []) {
   });
 }
 
-module.exports = { db, run, get, all };
+async function getConversationCount() {
+  const row = await get("SELECT COUNT(*) as total FROM conversations");
+  return row?.total || 0;
+}
+
+module.exports = { db, run, get, all, getConversationCount };

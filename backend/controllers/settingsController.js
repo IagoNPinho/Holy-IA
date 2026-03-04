@@ -1,17 +1,20 @@
 // Settings and automation endpoints.
 const { addJob, removeJob, listJobs } = require("../state/systemState");
-const { get, run } = require("../database/db");
+const { get, run, all } = require("../database/db");
 const { getAiEnabled, setAiEnabled } = require("../services/settingsService");
 const { sendBulk, scheduleSend } = require("../services/whatsappService");
 
 async function getSettings(_req, res) {
   const row = await get(
-    "SELECT clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message, ai_enabled FROM clinic_settings WHERE id = 1"
+    "SELECT clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message, ai_enabled, ai_enabled_global FROM clinic_settings WHERE id = 1"
   );
+  const blockedRows = await all("SELECT contact_id FROM ai_blocklist ORDER BY contact_id ASC");
   const aiEnabled = await getAiEnabled();
   res.json({
     aiEnabled,
+    aiEnabledGlobal: row?.ai_enabled_global ?? aiEnabled,
     scheduledJobs: listJobs(),
+    aiBlocklist: blockedRows.map((item) => item.contact_id),
     clinicSettings: {
       clinicName: row?.clinic_name || "",
       tone: row?.tone || row?.voice_tone || "professional",
@@ -92,12 +95,13 @@ async function scheduleMessage(req, res, next) {
 
 async function updateClinicSettings(req, res, next) {
   try {
-    const { clinicName, tone, voiceTone, procedures, workingHours, confirmationMessage } = req.body || {};
+    const { clinicName, tone, voiceTone, procedures, workingHours, confirmationMessage, aiEnabledGlobal, aiBlocklist } =
+      req.body || {};
     const finalTone = tone || voiceTone || "professional";
     await run(
       `
       UPDATE clinic_settings
-      SET clinic_name = ?, tone = ?, voice_tone = ?, procedures = ?, working_hours = ?, confirmation_message = ?, updated_at = datetime('now')
+      SET clinic_name = ?, tone = ?, voice_tone = ?, procedures = ?, working_hours = ?, confirmation_message = ?, ai_enabled_global = ?, updated_at = datetime('now')
       WHERE id = 1
       `,
       [
@@ -107,8 +111,22 @@ async function updateClinicSettings(req, res, next) {
         procedures || "",
         workingHours || "",
         confirmationMessage || "",
+        aiEnabledGlobal ? 1 : 0,
       ]
     );
+    if (Array.isArray(aiBlocklist)) {
+      await run("DELETE FROM ai_blocklist");
+      for (const contactId of aiBlocklist) {
+        if (!contactId) continue;
+        await run(
+          `
+          INSERT OR IGNORE INTO ai_blocklist (contact_id)
+          VALUES (?)
+          `,
+          [contactId.trim()]
+        );
+      }
+    }
     return res.json({ ok: true });
   } catch (error) {
     return next(error);

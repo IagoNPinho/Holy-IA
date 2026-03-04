@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { Send, Bot, User } from "lucide-react"
+import { Send, Bot, User, ArrowLeft } from "lucide-react"
 
 export interface Message {
   id: string
@@ -21,9 +21,17 @@ interface ChatAreaProps {
   aiEnabled: boolean
   onToggleAi: (enabled: boolean) => void
   onSendMessage: (content: string) => void
+  onBack?: () => void
 }
 
-export function ChatArea({ contactName, messages, aiEnabled, onToggleAi, onSendMessage }: ChatAreaProps) {
+export function ChatArea({
+  contactName,
+  messages,
+  aiEnabled,
+  onToggleAi,
+  onSendMessage,
+  onBack,
+}: ChatAreaProps) {
   const [inputValue, setInputValue] = useState("")
 
   const handleSend = () => {
@@ -41,8 +49,16 @@ export function ChatArea({ contactName, messages, aiEnabled, onToggleAi, onSendM
   }
 
   const initials = contactName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
+  const parseDate = (value: string) => {
+    const asNumber = Number(value);
+    if (!Number.isNaN(asNumber) && asNumber > 0) {
+      return new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber);
+    }
+    return new Date(value);
+  };
+
   const groupedMessages = messages.reduce<{ date: string; items: Message[] }[]>((acc, message) => {
-    const date = new Date(message.timestamp).toLocaleDateString("pt-BR")
+    const date = parseDate(message.timestamp).toLocaleDateString("pt-BR")
     const last = acc[acc.length - 1]
     if (!last || last.date !== date) {
       acc.push({ date, items: [message] })
@@ -53,13 +69,23 @@ export function ChatArea({ contactName, messages, aiEnabled, onToggleAi, onSendM
   }, [])
 
   const formatTime = (value: string) =>
-    new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    parseDate(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
 
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card">
         <div className="flex items-center gap-3">
+          {onBack && (
+            <Button
+              variant="ghost"
+              onClick={onBack}
+              className="md:hidden h-8 w-8 p-0"
+            >
+              <span className="sr-only">Voltar</span>
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          )}
           <Avatar className="w-10 h-10">
             <AvatarFallback className="bg-accent text-accent-foreground">
               {initials}

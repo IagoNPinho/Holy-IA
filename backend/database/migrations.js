@@ -114,6 +114,7 @@ async function migrate() {
 
   await ensureColumns("clinic_settings", {
     ai_enabled: "INTEGER NOT NULL DEFAULT 1",
+    ai_enabled_global: "INTEGER NOT NULL DEFAULT 1",
     clinic_name: "TEXT",
     tone: "TEXT",
     voice_tone: "TEXT",
@@ -125,14 +126,27 @@ async function migrate() {
 
   await run(`
     INSERT OR IGNORE INTO clinic_settings
-      (id, ai_enabled, clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message)
+      (id, ai_enabled, ai_enabled_global, clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message)
     VALUES
-      (1, 1, '', 'professional', 'professional', '', '', '')
+      (1, 1, 1, '', 'professional', 'professional', '', '', '')
   `);
   await run(`
     UPDATE clinic_settings
     SET tone = COALESCE(tone, voice_tone, 'professional')
     WHERE tone IS NULL OR tone = ''
+  `);
+  await run(`
+    UPDATE clinic_settings
+    SET ai_enabled_global = COALESCE(ai_enabled_global, ai_enabled, 1)
+    WHERE ai_enabled_global IS NULL
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS ai_blocklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
   `);
   await run(`
     UPDATE clinic_settings
@@ -153,6 +167,7 @@ async function migrate() {
 
   await run(`CREATE INDEX IF NOT EXISTS idx_ai_logs_conversation_id ON ai_logs(conversation_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_ai_logs_created_at ON ai_logs(created_at)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)`);
 }
 
 module.exports = { migrate };

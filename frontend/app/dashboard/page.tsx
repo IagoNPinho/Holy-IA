@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { cn } from "@/lib/utils"
 import { ConversationList, type Conversation } from "@/components/conversation-list"
 import { ChatArea, type Message } from "@/components/chat-area"
 import { EmptyChat } from "@/components/empty-chat"
@@ -37,12 +38,21 @@ export default function DashboardPage() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
   const [qrRefreshing, setQrRefreshing] = useState(false)
+  const [mobileView, setMobileView] = useState<"list" | "chat">("list")
 
   const selectedConversation = useMemo(
     () => conversations.find(c => c.id === selectedId),
     [conversations, selectedId]
   )
   const selectedMessages = selectedId ? messages[selectedId] || [] : []
+
+  const sortedConversations = useMemo(() => {
+    return [...conversations].sort((a, b) => {
+      const at = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      const bt = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      return bt - at
+    })
+  }, [conversations])
 
   useEffect(() => {
     let isActive = true
@@ -84,15 +94,15 @@ export default function DashboardPage() {
           "/conversations?limit=20&offset=0"
         )
         if (!isActive) return
-        const mapped = res.data.map(item => ({
-          id: String(item.id),
-          contactId: item.contact_id,
-          contactName: item.name || item.contact_id,
-          lastMessage: item.last_message || "",
-          timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
-          unread: false,
-          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-        }))
+          const mapped = res.data.map(item => ({
+            id: String(item.id),
+            contactId: item.contact_id,
+            contactName: item.name || item.contact_id,
+            lastMessage: item.last_message || "",
+            timestamp: item.updated_at || "",
+            unread: false,
+            aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+          }))
         setConversations(mapped)
         setConversationsOffset(mapped.length)
         setConversationsError(null)
@@ -122,7 +132,7 @@ export default function DashboardPage() {
         contactId: item.contact_id,
         contactName: item.name || item.contact_id,
         lastMessage: item.last_message || "",
-        timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
+        timestamp: item.updated_at || "",
         unread: false,
         aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
       }))
@@ -156,9 +166,14 @@ export default function DashboardPage() {
 
   const handleSelectConversation = (id: string) => {
     setSelectedId(id)
+    setMobileView("chat")
     setConversations(prev =>
       prev.map(c => c.id === id ? { ...c, unread: false } : c)
     )
+  }
+
+  const handleBackToList = () => {
+    setMobileView("list")
   }
 
   const handleToggleAi = async (enabled: boolean) => {
@@ -219,15 +234,6 @@ export default function DashboardPage() {
     await refreshQr()
   }
 
-  const handleDisconnect = async () => {
-    try {
-      const res = await request<{ status: string }>("/whatsapp/disconnect", { method: "POST" })
-      setWhatsappStatus(res.status)
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
   useEffect(() => {
     let isActive = true
     const poll = async () => {
@@ -254,8 +260,13 @@ export default function DashboardPage() {
   }, [refreshQr])
 
   return (
-    <div className="flex h-full">
-      <div className="w-[30%] min-w-[280px] max-w-[400px]">
+    <div className="flex h-full overflow-hidden">
+      <div
+        className={cn(
+          "w-full md:w-[30%] md:min-w-[280px] md:max-w-[400px] h-full",
+          mobileView === "chat" ? "hidden md:block" : "block"
+        )}
+      >
         <div className="flex flex-col h-full">
           {conversationsError && (
             <div className="px-4 py-2 text-xs text-destructive border-b border-border bg-card">
@@ -264,7 +275,7 @@ export default function DashboardPage() {
           )}
           <div className="flex-1">
             <ConversationList
-              conversations={conversations}
+              conversations={sortedConversations}
               selectedId={selectedId}
               onSelect={handleSelectConversation}
             />
@@ -282,7 +293,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="flex-1">
+      <div
+        className={cn(
+          "flex-1 h-full min-h-0 flex flex-col",
+          mobileView === "list" ? "hidden md:flex" : "flex"
+        )}
+      >
         <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
           <div className="text-sm text-muted-foreground">
             {isLoading ? "Carregando..." : `API: ${API_BASE}`}
@@ -296,9 +312,6 @@ export default function DashboardPage() {
                 <span className="text-xs text-success font-medium">
                   WhatsApp conectado
                 </span>
-                <Button variant="outline" onClick={handleDisconnect}>
-                  Desconectar WhatsApp
-                </Button>
               </>
             )}
             {whatsappStatus === "not_authenticated" && (
@@ -336,6 +349,7 @@ export default function DashboardPage() {
             aiEnabled={selectedConversation.aiEnabled ?? false}
             onToggleAi={handleToggleAi}
             onSendMessage={handleSendMessage}
+            onBack={handleBackToList}
           />
         ) : (
           <EmptyChat />
