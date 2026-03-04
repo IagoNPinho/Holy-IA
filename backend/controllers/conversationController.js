@@ -35,7 +35,7 @@ async function listConversations(req, res, next) {
           )
         ) AS updated_at
       FROM conversations c
-      ORDER BY updated_at IS NULL, updated_at DESC
+      ORDER BY updated_at IS NULL, datetime(updated_at) DESC
       LIMIT ? OFFSET ?
       `,
       [limit, offset]
