@@ -114,8 +114,35 @@ export default function DashboardPage() {
       }
     }
     loadConversations()
+    const interval = setInterval(async () => {
+      try {
+        const res = await request<{ data: ConversationApi[] }>(
+          "/conversations?limit=20&offset=0"
+        )
+        if (!isActive) return
+        const mapped = res.data.map(item => ({
+          id: String(item.id),
+          contactName: item.name || "",
+          lastMessage: item.last_message || "",
+          timestamp: item.updated_at || "",
+          unread: false,
+          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+        }))
+        setConversations(prev => {
+          const byId = new Map(prev.map(c => [c.id, c]))
+          const incomingIds = new Set(mapped.map(c => c.id))
+          const mergedTop = mapped.map(c => ({ ...byId.get(c.id), ...c }))
+          const rest = prev.filter(c => !incomingIds.has(c.id))
+          return [...mergedTop, ...rest]
+        })
+        setConversationsOffset(prev => Math.max(prev, mapped.length))
+      } catch (err) {
+        console.error(err)
+      }
+    }, 8000)
     return () => {
       isActive = false
+      clearInterval(interval)
     }
   }, [])
 
@@ -145,10 +172,12 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    let isActive = true
     const loadMessages = async () => {
       if (!selectedId) return
       try {
         const res = await request<{ data: MessageApi[] }>(`/messages/${selectedId}?limit=100`)
+        if (!isActive) return
         const mapped: Message[] = res.data
           .slice()
           .reverse()
@@ -170,6 +199,11 @@ export default function DashboardPage() {
       }
     }
     loadMessages()
+    const interval = setInterval(loadMessages, 5000)
+    return () => {
+      isActive = false
+      clearInterval(interval)
+    }
   }, [selectedId])
 
   const handleSelectConversation = (id: string) => {
