@@ -10,6 +10,8 @@ let client = null;
 let latestQr = null;
 let connectionStatus = "disconnected";
 let messageSchema = null;
+const processedMessageIds = new Map();
+const processedMessageKeys = new Map();
 
 function log(level, message, meta = {}) {
   const payload = {
@@ -163,13 +165,15 @@ async function saveAiLog({ conversationId, prompt, response }) {
 
 async function handleIncomingMessage(message) {
   try {
+    if (message?.fromMe) {
+      return;
+    }
     const contact = await message.getContact();
     const contactId = message.from;
     if (
       contactId === "status@broadcast" ||
       contactId?.includes("@newsletter") ||
-      contactId?.includes("@g.us") ||
-      contactId?.includes("@lid")
+      contactId?.includes("@g.us")
     ) {
       log("info", "skip_broadcast_message", { contactId });
       return;
@@ -177,6 +181,32 @@ async function handleIncomingMessage(message) {
     const contactName = contact?.pushname || contact?.name || contactId;
 
     const conversation = await ensureConversation(contactId, contactName);
+    const now = Date.now();
+    const messageId = message?.id?.id || message?.id?._serialized;
+    const fallbackKey = `${contactId}:${message?.body || ""}:${message?.timestamp || ""}`;
+    const dedupeKey = messageId ? `id:${messageId}` : `fallback:${fallbackKey}`;
+    const last = processedMessageIds.get(dedupeKey) || processedMessageKeys.get(dedupeKey);
+    if (last && now - last < 5 * 60 * 1000) {
+      log("info", "duplicate_message_skipped", { messageId, contactId, dedupeKey });
+      return;
+    }
+    if (messageId) {
+      processedMessageIds.set(dedupeKey, now);
+    } else {
+      processedMessageKeys.set(dedupeKey, now);
+    }
+    if (processedMessageIds.size + processedMessageKeys.size > 5000) {
+      for (const [key, value] of processedMessageIds) {
+        if (now - value > 10 * 60 * 1000) {
+          processedMessageIds.delete(key);
+        }
+      }
+      for (const [key, value] of processedMessageKeys) {
+        if (now - value > 10 * 60 * 1000) {
+          processedMessageKeys.delete(key);
+        }
+      }
+    }
     const timestamp = message.timestamp
       ? new Date(message.timestamp * 1000).toISOString()
       : new Date().toISOString();
