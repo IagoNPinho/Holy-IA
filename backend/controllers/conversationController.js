@@ -2,8 +2,10 @@
 const { all, run } = require("../database/db");
 const { sendManualMessage } = require("../services/whatsappService");
 
-async function listConversations(_req, res, next) {
+async function listConversations(req, res, next) {
   try {
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
+    const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
     const conversations = await all(
       `
       SELECT
@@ -33,8 +35,9 @@ async function listConversations(_req, res, next) {
         ) AS updated_at
       FROM conversations c
       ORDER BY updated_at IS NULL, updated_at DESC
-      LIMIT 20
-      `
+      LIMIT ? OFFSET ?
+      `,
+      [limit, offset]
     );
     res.json({ data: conversations });
   } catch (error) {

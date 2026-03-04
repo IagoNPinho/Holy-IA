@@ -31,6 +31,9 @@ export default function DashboardPage() {
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
+  const [conversationsOffset, setConversationsOffset] = useState<number>(0)
+  const [conversationsHasMore, setConversationsHasMore] = useState<boolean>(true)
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [whatsappStatus, setWhatsappStatus] = useState<string>("disconnected")
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
@@ -44,12 +47,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let isActive = true
-    const load = async () => {
-      setIsLoading(true)
+    const loadStatuses = async () => {
       try {
-        const [aiResult, convResult, waResult] = await Promise.allSettled([
+        const [aiResult, waResult] = await Promise.allSettled([
           request<{ enabled: boolean }>("/ai/status"),
-          request<{ data: ConversationApi[] }>("/conversations"),
           request<{ status: string }>("/whatsapp/status"),
         ])
 
@@ -59,38 +60,83 @@ export default function DashboardPage() {
           setAiEnabled(aiResult.value.enabled)
         }
 
-        if (convResult.status === "fulfilled") {
-          const mapped = convResult.value.data.map(item => ({
-            id: String(item.id),
-            contactId: item.contact_id,
-            contactName: item.name || item.contact_id,
-            lastMessage: item.last_message || "",
-            timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
-            unread: false,
-            aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-          }))
-          setConversations(mapped)
-          setConversationsError(null)
-        } else {
-          setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
-        }
-
         if (waResult.status === "fulfilled") {
           setWhatsappStatus(waResult.value.status)
         }
       } catch (err) {
         console.error(err)
-      } finally {
-        if (isActive) setIsLoading(false)
       }
     }
-    load()
-    const interval = setInterval(load, 10000)
+
+    loadStatuses()
+    const interval = setInterval(loadStatuses, 15000)
     return () => {
       isActive = false
       clearInterval(interval)
     }
   }, [])
+
+  useEffect(() => {
+    let isActive = true
+    const loadConversations = async () => {
+      setIsLoading(true)
+      try {
+        const res = await request<{ data: ConversationApi[] }>(
+          "/conversations?limit=20&offset=0"
+        )
+        if (!isActive) return
+        const mapped = res.data.map(item => ({
+          id: String(item.id),
+          contactId: item.contact_id,
+          contactName: item.name || item.contact_id,
+          lastMessage: item.last_message || "",
+          timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
+          unread: false,
+          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+        }))
+        setConversations(mapped)
+        setConversationsOffset(0)
+        setConversationsHasMore(res.data.length === 20)
+        setConversationsError(null)
+      } catch (err) {
+        setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
+        console.error(err)
+      } finally {
+        if (isActive) setIsLoading(false)
+      }
+    }
+    loadConversations()
+    return () => {
+      isActive = false
+    }
+  }, [])
+
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !conversationsHasMore) return
+    const nextOffset = conversationsOffset + 20
+    setIsLoadingMore(true)
+    try {
+      const res = await request<{ data: ConversationApi[] }>(
+        `/conversations?limit=20&offset=${nextOffset}`
+      )
+      const mapped = res.data.map(item => ({
+        id: String(item.id),
+        contactId: item.contact_id,
+        contactName: item.name || item.contact_id,
+        lastMessage: item.last_message || "",
+        timestamp: item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "",
+        unread: false,
+        aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+      }))
+      setConversations(prev => [...prev, ...mapped])
+      setConversationsOffset(nextOffset)
+      setConversationsHasMore(res.data.length === 20)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     const loadMessages = async () => {
@@ -225,6 +271,16 @@ export default function DashboardPage() {
               selectedId={selectedId}
               onSelect={handleSelectConversation}
             />
+          </div>
+          <div className="p-3 border-t border-border bg-card">
+            <Button
+              variant="outline"
+              onClick={handleLoadMore}
+              disabled={!conversationsHasMore || isLoadingMore}
+              className="w-full"
+            >
+              {isLoadingMore ? "Carregando..." : "Carregar mais"}
+            </Button>
           </div>
         </div>
       </div>

@@ -115,6 +115,7 @@ async function migrate() {
   await ensureColumns("clinic_settings", {
     ai_enabled: "INTEGER NOT NULL DEFAULT 1",
     clinic_name: "TEXT",
+    tone: "TEXT",
     voice_tone: "TEXT",
     procedures: "TEXT",
     working_hours: "TEXT",
@@ -124,9 +125,14 @@ async function migrate() {
 
   await run(`
     INSERT OR IGNORE INTO clinic_settings
-      (id, ai_enabled, clinic_name, voice_tone, procedures, working_hours, confirmation_message)
+      (id, ai_enabled, clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message)
     VALUES
-      (1, 1, '', 'professional', '', '', '')
+      (1, 1, '', 'professional', 'professional', '', '', '')
+  `);
+  await run(`
+    UPDATE clinic_settings
+    SET tone = COALESCE(tone, voice_tone, 'professional')
+    WHERE tone IS NULL OR tone = ''
   `);
   await run(`
     UPDATE clinic_settings

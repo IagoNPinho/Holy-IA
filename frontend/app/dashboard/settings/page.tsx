@@ -9,14 +9,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Save, Building2, MessageSquare, Clock, CheckCircle } from "lucide-react"
 import { request } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [saved, setSaved] = useState(false)
+  const { toast } = useToast()
 
   const [settings, setSettings] = useState({
     clinicName: "",
-    voiceTone: "professional",
+    tone: "professional",
     procedures: "",
     workingHours: "",
     confirmationMessage: "",
@@ -39,11 +41,15 @@ export default function SettingsPage() {
     setSaved(false)
 
     try {
-      await request("/clinic-settings", {
+      await request("/settings", {
         method: "PUT",
         body: JSON.stringify(settings),
       })
       setSaved(true)
+      toast({
+        title: "Configurações salvas",
+        description: "As configurações da IA foram atualizadas com sucesso.",
+      })
       setTimeout(() => setSaved(false), 3000)
     } catch (err) {
       console.error(err)
@@ -96,8 +102,8 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label htmlFor="voiceTone" className="text-foreground">Tom de Voz</Label>
               <Select 
-                value={settings.voiceTone} 
-                onValueChange={(value) => setSettings(prev => ({ ...prev, voiceTone: value }))}
+                value={settings.tone} 
+                onValueChange={(value) => setSettings(prev => ({ ...prev, tone: value }))}
               >
                 <SelectTrigger className="bg-input border-border text-foreground">
                   <SelectValue placeholder="Selecione o tom de voz" />

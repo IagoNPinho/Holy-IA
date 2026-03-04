@@ -4,6 +4,7 @@ const { getSettings, bulkSend, scheduleMessage, updateClinicSettings } = require
 const router = express.Router();
 
 router.get("/settings", getSettings);
+router.put("/settings", updateClinicSettings);
 router.post("/bulk-send", bulkSend);
 router.post("/schedule-send", scheduleMessage);
 router.put("/clinic-settings", updateClinicSettings);

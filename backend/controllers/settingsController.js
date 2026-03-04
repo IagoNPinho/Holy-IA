@@ -6,7 +6,7 @@ const { sendBulk, scheduleSend } = require("../services/whatsappService");
 
 async function getSettings(_req, res) {
   const row = await get(
-    "SELECT clinic_name, voice_tone, procedures, working_hours, confirmation_message, ai_enabled FROM clinic_settings WHERE id = 1"
+    "SELECT clinic_name, tone, voice_tone, procedures, working_hours, confirmation_message, ai_enabled FROM clinic_settings WHERE id = 1"
   );
   const aiEnabled = await getAiEnabled();
   res.json({
@@ -14,7 +14,7 @@ async function getSettings(_req, res) {
     scheduledJobs: listJobs(),
     clinicSettings: {
       clinicName: row?.clinic_name || "",
-      voiceTone: row?.voice_tone || "professional",
+      tone: row?.tone || row?.voice_tone || "professional",
       procedures: row?.procedures || "",
       workingHours: row?.working_hours || "",
       confirmationMessage: row?.confirmation_message || "",
@@ -92,16 +92,18 @@ async function scheduleMessage(req, res, next) {
 
 async function updateClinicSettings(req, res, next) {
   try {
-    const { clinicName, voiceTone, procedures, workingHours, confirmationMessage } = req.body || {};
+    const { clinicName, tone, voiceTone, procedures, workingHours, confirmationMessage } = req.body || {};
+    const finalTone = tone || voiceTone || "professional";
     await run(
       `
       UPDATE clinic_settings
-      SET clinic_name = ?, voice_tone = ?, procedures = ?, working_hours = ?, confirmation_message = ?, updated_at = datetime('now')
+      SET clinic_name = ?, tone = ?, voice_tone = ?, procedures = ?, working_hours = ?, confirmation_message = ?, updated_at = datetime('now')
       WHERE id = 1
       `,
       [
         clinicName || "",
-        voiceTone || "professional",
+        finalTone,
+        finalTone,
         procedures || "",
         workingHours || "",
         confirmationMessage || "",
