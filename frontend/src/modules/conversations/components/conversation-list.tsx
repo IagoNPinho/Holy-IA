@@ -5,8 +5,9 @@ import { Virtuoso } from "react-virtuoso"
 import { cn } from "@/utils/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
-import { Search } from "lucide-react"
+import { Search, Bell, Send, CheckCircle } from "lucide-react"
 import { useConversationList, useConversationStore } from "@/store/conversation-store"
+import { request } from "@/services/api"
 
 const stageColor = (stage?: string) => {
   switch (stage) {
@@ -30,6 +31,7 @@ export function ConversationList() {
   const conversations = useConversationList()
   const selectedId = useConversationStore((state) => state.selectedId)
   const selectConversation = useConversationStore((state) => state.selectConversation)
+  const upsertConversation = useConversationStore((state) => state.upsertConversation)
 
   const formatTimestamp = (value: string) => {
     if (!value) return ""
@@ -46,6 +48,63 @@ export function ConversationList() {
       item.lastMessage.toLowerCase().includes(q)
     )
   }, [conversations, query])
+
+  const getAlertLabel = (timestamp: string, unread: number, resolvedAt?: string | null) => {
+    if (!timestamp || unread === 0 || resolvedAt) return null
+    const ts = new Date(timestamp).getTime()
+    if (Number.isNaN(ts)) return null
+    const hours = (Date.now() - ts) / 36e5
+    if (hours >= 24) return "24h"
+    if (hours >= 12) return "12h"
+    if (hours >= 6) return "6h"
+    return null
+  }
+
+  const alertColor = (label: string) => {
+    if (label === "24h") return "bg-red-500/15 text-red-400"
+    if (label === "12h") return "bg-orange-500/15 text-orange-400"
+    return "bg-yellow-500/15 text-yellow-400"
+  }
+
+  const handleScheduleFollowup = async (conversationId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      await request("/followups/schedule", {
+        method: "POST",
+        body: JSON.stringify({ conversationId }),
+      })
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  const handleSendReminder = async (conversationId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      await request("/followups/remind", {
+        method: "POST",
+        body: JSON.stringify({ conversationId }),
+      })
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  const handleResolve = async (conversationId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      await request(`/conversations/${conversationId}/resolve`, {
+        method: "PATCH",
+      })
+      upsertConversation({
+        id: conversationId,
+        resolvedAt: new Date().toISOString(),
+        unread: 0,
+      } as any)
+    } catch (error) {
+      console.error(error)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full border-r border-border bg-card">
@@ -69,7 +128,7 @@ export function ConversationList() {
               key={conversation.id}
               onClick={() => selectConversation(conversation.id)}
               className={cn(
-                "w-full flex items-center gap-3 p-4 text-left transition-colors border-b border-border",
+                "w-full flex items-center gap-3 p-4 text-left transition-colors border-b border-border group",
                 selectedId === conversation.id
                   ? "bg-secondary"
                   : "hover:bg-secondary/50"
@@ -88,9 +147,26 @@ export function ConversationList() {
                   )}>
                     {conversation.contactName}
                   </span>
-                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                    {formatTimestamp(conversation.timestamp)}
-                  </span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {(() => {
+                      const label = getAlertLabel(
+                        conversation.timestamp,
+                        conversation.unread,
+                        conversation.resolvedAt
+                      )
+                      return label ? (
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-semibold",
+                          alertColor(label)
+                        )}>
+                          {label}
+                        </span>
+                      ) : null
+                    })()}
+                    <span className="text-xs text-muted-foreground">
+                      {formatTimestamp(conversation.timestamp)}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <p className={cn(
@@ -114,11 +190,39 @@ export function ConversationList() {
                   )}
                 </div>
               </div>
-              {conversation.unread > 0 && (
-                <div className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold flex items-center justify-center flex-shrink-0">
-                  {Math.min(conversation.unread || 1, 99)}
+              <div className="flex items-center gap-2">
+                {conversation.unread > 0 && (
+                  <div className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold flex items-center justify-center flex-shrink-0">
+                    {Math.min(conversation.unread || 1, 99)}
+                  </div>
+                )}
+                <div className="hidden group-hover:flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={(event) => handleScheduleFollowup(conversation.id, event)}
+                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                    title="Agendar follow-up"
+                  >
+                    <Bell className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => handleSendReminder(conversation.id, event)}
+                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                    title="Enviar lembrete"
+                  >
+                    <Send className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => handleResolve(conversation.id, event)}
+                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                    title="Marcar como resolvida"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
                 </div>
-              )}
+              </div>
             </button>
           )}
         />

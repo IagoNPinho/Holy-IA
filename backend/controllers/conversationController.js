@@ -15,6 +15,7 @@ async function listConversations(req, res, next) {
         COALESCE(c.name, c.contact_name, c.contact_id) AS name,
         COALESCE(c.ai_enabled, 1) AS ai_enabled,
         COALESCE(c.unread_count, 0) AS unread_count,
+        c.resolved_at,
         COALESCE(
           c.last_message,
           (
@@ -134,9 +135,28 @@ async function toggleConversationAi(req, res, next) {
   }
 }
 
+async function resolveConversation(req, res, next) {
+  try {
+    const { conversationId } = req.params;
+    await run(
+      `
+      UPDATE conversations
+      SET resolved_at = datetime('now'), unread_count = 0, updated_at = datetime('now')
+      WHERE id = ?
+      `,
+      [conversationId]
+    );
+    sendEvent("conversation_updated", { conversationId });
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   listConversations,
   listMessages,
   sendManual,
   toggleConversationAi,
+  resolveConversation,
 };

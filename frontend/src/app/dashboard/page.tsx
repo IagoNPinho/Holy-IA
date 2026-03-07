@@ -19,6 +19,7 @@ type ConversationApi = {
   unread_count?: number | null
   last_message: string | null
   updated_at: string | null
+  resolved_at?: string | null
 }
 
 type MessageApi = {
@@ -79,6 +80,7 @@ export default function DashboardPage() {
       timestamp: item.updated_at || "",
       unread: item.unread_count || 0,
       aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+      resolvedAt: item.resolved_at || null,
     }))
     setConversations(mapped)
   }, [conversationList.length, setConversations])
@@ -124,6 +126,7 @@ export default function DashboardPage() {
         timestamp: item.updated_at || "",
         unread: item.unread_count || 0,
         aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+        resolvedAt: item.resolved_at || null,
       }))
       setConversations([...conversationList, ...mapped])
     } catch (err) {

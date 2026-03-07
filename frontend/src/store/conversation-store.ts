@@ -13,6 +13,7 @@ export type Conversation = {
   unread: number
   aiEnabled: boolean
   stage?: ConversationStage
+  resolvedAt?: string | null
 }
 
 export type Message = {

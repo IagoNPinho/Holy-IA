@@ -30,6 +30,7 @@ async function migrate() {
     unread_count: "INTEGER NOT NULL DEFAULT 0",
     contact_name: "TEXT",
     created_at: "TEXT",
+    resolved_at: "TEXT",
   });
 
   await run(`
