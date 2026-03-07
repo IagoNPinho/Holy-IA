@@ -22,4 +22,4 @@ jobs:
             git reset --hard origin/main
             cd backend
             npm install
-            pm2 reload ecosystem.config.js
+            pm2 start ecosystem.config.js || pm2 reload ecosystem.config.js

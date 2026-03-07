@@ -533,9 +533,7 @@ async function initWhatsappClient() {
         "--disable-gpu",
         "--no-first-run",
         "--no-zygote",
-        "--single-process",
-        "--disable-extensions",
-        "--window-size=1280,720"
+        "--single-process"
       ]
     },
   });
