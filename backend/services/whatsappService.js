@@ -524,9 +524,8 @@ async function initWhatsappClient() {
       dataPath: "/var/www/.wwebjs_auth",
     }),
     puppeteer: {
-      // VPS-friendly Chromium flags to avoid sandbox/GPU crashes.
       headless: "new",
-      executablePath: "/usr/bin/chromium",
+      executablePath: "/usr/bin/chromium-browser",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -536,13 +535,8 @@ async function initWhatsappClient() {
         "--no-zygote",
         "--single-process",
         "--disable-extensions",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--disable-background-timer-throttling",
-        "--disable-renderer-backgrounding",
-        "--disable-features=site-per-process",
-        "--window-size=1280,720",
-      ],
+        "--window-size=1280,720"
+      ]
     },
   });
 
