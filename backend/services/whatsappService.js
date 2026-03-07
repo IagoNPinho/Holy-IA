@@ -19,6 +19,8 @@ let client = null;
 let latestQr = null;
 let connectionStatus = "disconnected";
 let messageSchema = null;
+let watchdogTimer = null;
+let restarting = false;
 const processedMessageIds = new Map();
 const processedMessageKeys = new Map();
 
@@ -522,16 +524,25 @@ async function initWhatsappClient() {
       dataPath: "/var/www/.wwebjs_auth",
     }),
     puppeteer: {
-      headless: true,
+      // VPS-friendly Chromium flags to avoid sandbox/GPU crashes.
+      headless: "new",
+      executablePath: "/usr/bin/chromium",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
+        "--disable-gpu",
         "--no-first-run",
         "--no-zygote",
-        "--single-process"
-      ]
+        "--single-process",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-background-timer-throttling",
+        "--disable-renderer-backgrounding",
+        "--disable-features=site-per-process",
+        "--window-size=1280,720",
+      ],
     },
   });
 
@@ -545,6 +556,7 @@ async function initWhatsappClient() {
   client.on("ready", () => {
     connectionStatus = "ready";
     log("info", "whatsapp_ready");
+    console.info("[WHATSAPP] Client ready");
     syncInitialChats(client)
       .then(async (result) => {
         const { getConversationCount } = require("../database/db");
@@ -573,11 +585,40 @@ async function initWhatsappClient() {
   client.on("disconnected", (reason) => {
     connectionStatus = "disconnected";
     log("warn", "whatsapp_disconnected", { reason });
+    console.warn("[WHATSAPP] Client disconnected", { reason });
   });
 
   client.on("message", handleIncomingMessage);
 
   await client.initialize();
+  startWatchdog();
+}
+
+function startWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(async () => {
+    console.info("[WATCHDOG] Checking system health");
+    if (connectionStatus === "ready" || connectionStatus === "authenticated") {
+      return;
+    }
+    if (restarting) return;
+    restarting = true;
+    try {
+      console.warn("[WATCHDOG] WhatsApp disconnected, attempting restart");
+      if (client) {
+        try {
+          await client.destroy();
+        } catch (error) {
+          log("warn", "whatsapp_destroy_failed", { error: error?.message });
+        }
+      }
+      await initWhatsappClient();
+    } catch (error) {
+      log("error", "whatsapp_watchdog_failed", { error: error?.message });
+    } finally {
+      restarting = false;
+    }
+  }, 60000);
 }
 
 function getWhatsappClient() {

@@ -17,6 +17,7 @@ const { aiRouter } = require("./routes/ai");
 const { debugRouter } = require("./routes/debug");
 const { metricsRouter } = require("./routes/metrics");
 const { authRouter } = require("./routes/auth");
+const { healthRouter } = require("./routes/health");
 const { authRequired } = require("./middleware/auth");
 
 const app = express();
@@ -55,9 +56,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
+app.use(healthRouter);
 
 function sseAuthRequired(req, res, next) {
   const header = req.headers.authorization || "";
@@ -111,6 +110,7 @@ async function bootstrap() {
 
     app.listen(env.PORT, () => {
       log("info", "server_started", { port: env.PORT });
+      console.info("[SERVER] Holy AI backend started");
     });
 
     const client = getWhatsappClient();
@@ -124,3 +124,11 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+// Memory watchdog (PM2 will restart if needed).
+setInterval(() => {
+  const mem = process.memoryUsage().rss / 1024 / 1024;
+  if (mem > 700) {
+    console.warn("[WATCHDOG] High memory usage detected", { rss_mb: mem.toFixed(0) });
+  }
+}, 120000);
