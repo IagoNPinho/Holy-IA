@@ -17,7 +17,17 @@ const INTENT_KEYWORDS = {
     "labios",
   ],
   price_question: ["preço", "preco", "valor", "quanto custa", "custa", "orçamento", "orcamento"],
-  appointment_request: ["agendar", "agendamento", "marcar", "marcar horário", "marcar horario", "consulta", "avaliação", "avaliacao"],
+  appointment_request: [
+    "agendar",
+    "agendamento",
+    "marcar",
+    "marcar horário",
+    "marcar horario",
+    "consulta",
+    "avaliação",
+    "avaliacao",
+  ],
+  schedule_request: ["horário disponível", "horario disponivel", "horários", "horarios", "agenda", "disponibilidade"],
   working_hours: ["horário", "horario", "funcionamento", "abre", "fecha", "atendimento", "dias", "horas"],
   general_conversation: [],
 };

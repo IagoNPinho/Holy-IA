@@ -443,11 +443,16 @@ async function handleIncomingMessage(message) {
 
     const history = await buildHistory(conversation.id, 10);
     let slotsPrompt = "";
-    if (intent === "appointment_request") {
+    if (intent === "appointment_request" || intent === "schedule_request") {
       const today = new Date().toISOString().slice(0, 10);
       const slots = await getAvailableSlots(today);
       if (slots.length) {
+        const list = slots.join(", ");
+        console.info(`[SCHEDULE] suggested slots: ${list}`);
         slotsPrompt = `Horários disponíveis hoje:\n${slots.join("\n")}\nPergunte qual prefere.`;
+      } else {
+        slotsPrompt =
+          "Hoje estamos com agenda cheia, mas posso verificar horários para amanhã. 😊";
       }
     }
     const memory = await get(
