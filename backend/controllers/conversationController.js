@@ -1,6 +1,7 @@
 // Conversation and message read endpoints.
 const { all, run } = require("../database/db");
 const { sendManualMessage } = require("../services/whatsappService");
+const { sendEvent } = require("../services/sseService");
 
 async function listConversations(req, res, next) {
   try {
@@ -59,7 +60,11 @@ async function listMessages(req, res, next) {
         COALESCE(from_me, CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS from_me,
         body,
         COALESCE(timestamp, created_at) AS timestamp,
-        message_type
+        message_type,
+        media_type,
+        media_url,
+        mime_type,
+        intent
       FROM messages
       WHERE conversation_id = ?
       ${before ? "AND COALESCE(timestamp, created_at) < ?" : ""}
@@ -67,6 +72,14 @@ async function listMessages(req, res, next) {
       LIMIT ?
       `,
       before ? [conversationId, before, limit] : [conversationId, limit]
+    );
+    await run(
+      `
+      UPDATE conversations
+      SET unread_count = 0
+      WHERE id = ?
+      `,
+      [conversationId]
     );
     res.json({ data: messages });
   } catch (error) {
@@ -114,6 +127,7 @@ async function toggleConversationAi(req, res, next) {
       `,
       [value, conversationId]
     );
+    sendEvent("conversation_updated", { conversationId });
     return res.json({ ok: true, aiEnabled: Boolean(value) });
   } catch (error) {
     return next(error);

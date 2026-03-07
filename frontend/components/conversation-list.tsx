@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -12,6 +13,7 @@ export interface Conversation {
   lastMessage: string
   timestamp: string
   unread?: boolean
+  unreadCount?: number
   aiEnabled?: boolean
 }
 
@@ -22,12 +24,21 @@ interface ConversationListProps {
 }
 
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
+  const [query, setQuery] = useState("")
   const formatTimestamp = (value: string) => {
     if (!value) return "";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   };
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return conversations
+    return conversations.filter(item =>
+      item.contactName.toLowerCase().includes(q) ||
+      item.lastMessage.toLowerCase().includes(q)
+    )
+  }, [conversations, query])
   return (
     <div className="flex flex-col h-full border-r border-border bg-card">
       {/* Search Header */}
@@ -36,6 +47,8 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
             placeholder="Buscar conversas..." 
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             className="pl-9 bg-input border-border text-foreground placeholder:text-muted-foreground"
           />
         </div>
@@ -43,7 +56,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
 
       {/* Conversations */}
       <div className="flex-1 overflow-y-auto h-full">
-        {conversations.map((conversation) => (
+        {filtered.map((conversation) => (
           <button
             key={conversation.id}
             onClick={() => onSelect(conversation.id)}
@@ -86,7 +99,9 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               </div>
             </div>
             {conversation.unread && (
-              <div className="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
+              <div className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold flex items-center justify-center flex-shrink-0">
+                {Math.min(conversation.unreadCount || 1, 99)}
+              </div>
             )}
           </button>
         ))}

@@ -76,6 +76,10 @@ async function migrate() {
     direction: "TEXT",
     created_at: "TEXT",
     message_type: "TEXT DEFAULT 'incoming'",
+    intent: "TEXT",
+    media_type: "TEXT",
+    media_url: "TEXT",
+    mime_type: "TEXT",
   });
 
   const messageColumns = await all(`PRAGMA table_info(messages)`);
@@ -108,6 +112,8 @@ async function migrate() {
   await run(
     `CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp ON messages(conversation_id, timestamp DESC)`
   );
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_intent ON messages(intent)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages(media_type)`);
 
   await run(`
     CREATE TABLE IF NOT EXISTS clinic_settings (
@@ -175,9 +181,92 @@ async function migrate() {
     )
   `);
 
+  await ensureColumns("ai_logs", {
+    contact_id: "TEXT",
+    intent: "TEXT",
+    provider: "TEXT",
+    model: "TEXT",
+    tokens: "INTEGER",
+  });
+
   await run(`CREATE INDEX IF NOT EXISTS idx_ai_logs_conversation_id ON ai_logs(conversation_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_ai_logs_created_at ON ai_logs(created_at)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_number TEXT NOT NULL UNIQUE,
+      first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen_at)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS follow_up_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id INTEGER,
+      contact_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      run_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      sent_at TEXT,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_follow_up_jobs_run_at ON follow_up_jobs(run_at)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_follow_up_jobs_status ON follow_up_jobs(status)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS patient_memory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_id TEXT NOT NULL UNIQUE,
+      patient_name TEXT,
+      interests TEXT,
+      last_procedure_discussed TEXT,
+      last_intent TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_patient_memory_contact ON patient_memory(contact_id)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS procedures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      price TEXT,
+      duration TEXT,
+      category TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_procedures_name ON procedures(name)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_procedures_active ON procedures(active)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      patient_name TEXT,
+      contact_id TEXT,
+      procedure TEXT,
+      appointment_date TEXT,
+      appointment_time TEXT,
+      professional TEXT,
+      status TEXT,
+      source TEXT NOT NULL DEFAULT 'clinicexperts',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_appointments_date_time ON appointments(appointment_date, appointment_time)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_appointments_patient ON appointments(patient_name)`);
 }
 
 module.exports = { migrate };

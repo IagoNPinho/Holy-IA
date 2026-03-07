@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
@@ -6,7 +6,7 @@ import { ConversationList, type Conversation } from "@/components/conversation-l
 import { ChatArea, type Message } from "@/components/chat-area"
 import { EmptyChat } from "@/components/empty-chat"
 import { Button } from "@/components/ui/button"
-import { request } from "@/lib/api"
+import { API_BASE, request } from "@/lib/api"
 import QRCode from "qrcode"
 
 type ConversationApi = {
@@ -24,6 +24,10 @@ type MessageApi = {
   body: string
   timestamp: string
   message_type?: "incoming" | "manual" | "ai" | null
+  media_type?: string | null
+  media_url?: string | null
+  mime_type?: string | null
+  intent?: string | null
 }
 
 export default function DashboardPage() {
@@ -86,28 +90,41 @@ export default function DashboardPage() {
     }
   }, [])
 
+  const refreshConversations = useCallback(async (limitOverride?: number) => {
+    const limit = Math.max(limitOverride || 20, conversations.length || 0)
+    const res = await request<{ data: ConversationApi[] }>(
+      `/conversations?limit=${limit}&offset=0`
+    )
+    const mapped = res.data.map(item => ({
+      id: String(item.id),
+      contactName: item.name || "",
+      lastMessage: item.last_message || "",
+      timestamp: item.updated_at || "",
+      unread: (item.unread_count || 0) > 0,
+      unreadCount: item.unread_count || 0,
+      aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
+    }))
+    setConversations(prev => {
+      if (!prev.length) return mapped
+      const byId = new Map(prev.map(c => [c.id, c]))
+      const incomingIds = new Set(mapped.map(c => c.id))
+      const mergedTop = mapped.map(c => ({ ...byId.get(c.id), ...c }))
+      const rest = prev.filter(c => !incomingIds.has(c.id))
+      return [...mergedTop, ...rest]
+    })
+    setConversationsOffset(prev => Math.max(prev, mapped.length))
+  }, [conversations.length])
+
   useEffect(() => {
     let isActive = true
     const loadConversations = async () => {
       setIsLoading(true)
       try {
-        const res = await request<{ data: ConversationApi[] }>(
-          "/conversations?limit=20&offset=0"
-        )
+        await refreshConversations(20)
         if (!isActive) return
-        const mapped = res.data.map(item => ({
-          id: String(item.id),
-          contactName: item.name || "",
-          lastMessage: item.last_message || "",
-          timestamp: item.updated_at || "",
-          unread: false,
-          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-        }))
-        setConversations(mapped)
-        setConversationsOffset(mapped.length)
         setConversationsError(null)
       } catch (err) {
-        setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
+        setConversationsError("NÃ£o foi possÃ­vel carregar as conversas. Verifique sua sessÃ£o.")
         console.error(err)
       } finally {
         if (isActive) setIsLoading(false)
@@ -116,26 +133,7 @@ export default function DashboardPage() {
     loadConversations()
     const interval = setInterval(async () => {
       try {
-        const res = await request<{ data: ConversationApi[] }>(
-          "/conversations?limit=20&offset=0"
-        )
-        if (!isActive) return
-        const mapped = res.data.map(item => ({
-          id: String(item.id),
-          contactName: item.name || "",
-          lastMessage: item.last_message || "",
-          timestamp: item.updated_at || "",
-          unread: false,
-          aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-        }))
-        setConversations(prev => {
-          const byId = new Map(prev.map(c => [c.id, c]))
-          const incomingIds = new Set(mapped.map(c => c.id))
-          const mergedTop = mapped.map(c => ({ ...byId.get(c.id), ...c }))
-          const rest = prev.filter(c => !incomingIds.has(c.id))
-          return [...mergedTop, ...rest]
-        })
-        setConversationsOffset(prev => Math.max(prev, mapped.length))
+        await refreshConversations()
       } catch (err) {
         console.error(err)
       }
@@ -144,7 +142,7 @@ export default function DashboardPage() {
       isActive = false
       clearInterval(interval)
     }
-  }, [])
+  }, [refreshConversations])
 
   const handleLoadMore = async () => {
     if (isLoadingMore) return
@@ -159,7 +157,8 @@ export default function DashboardPage() {
         contactName: item.name || "",
         lastMessage: item.last_message || "",
         timestamp: item.updated_at || "",
-        unread: false,
+        unread: (item.unread_count || 0) > 0,
+        unreadCount: item.unread_count || 0,
         aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
       }))
       setConversations(prev => [...prev, ...mapped])
@@ -171,29 +170,36 @@ export default function DashboardPage() {
     }
   }
 
+  const refreshMessages = useCallback(async (conversationId: string) => {
+    const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=100`)
+    const mapped: Message[] = res.data
+      .slice()
+      .reverse()
+      .map(item => ({
+        id: String(item.id),
+        content: item.body,
+        sender:
+          item.message_type === "ai"
+            ? "ai"
+            : item.message_type === "manual"
+              ? "user"
+              : "contact",
+        timestamp: item.timestamp,
+        messageType: item.message_type || null,
+        mediaType: item.media_type || null,
+        mediaUrl: item.media_url || null,
+        mimeType: item.mime_type || null,
+      }))
+    setMessages(prev => ({ ...prev, [conversationId]: mapped }))
+  }, [])
+
   useEffect(() => {
     let isActive = true
     const loadMessages = async () => {
       if (!selectedId) return
       try {
-        const res = await request<{ data: MessageApi[] }>(`/messages/${selectedId}?limit=100`)
+        await refreshMessages(selectedId)
         if (!isActive) return
-        const mapped: Message[] = res.data
-          .slice()
-          .reverse()
-          .map(item => ({
-            id: String(item.id),
-            content: item.body,
-            sender:
-              item.message_type === "ai"
-                ? "ai"
-                : item.message_type === "manual"
-                  ? "user"
-                  : "contact",
-            timestamp: item.timestamp,
-            messageType: item.message_type || null,
-          }))
-        setMessages(prev => ({ ...prev, [selectedId]: mapped }))
       } catch (err) {
         console.error(err)
       }
@@ -204,13 +210,38 @@ export default function DashboardPage() {
       isActive = false
       clearInterval(interval)
     }
-  }, [selectedId])
+  }, [selectedId, refreshMessages])
+
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("auth_token") : null
+    if (!token) return
+    const source = new EventSource(`${API_BASE}/events?token=${encodeURIComponent(token)}`)
+    const handleUpdate = async () => {
+      try {
+        await refreshConversations()
+        if (selectedId) {
+          await refreshMessages(selectedId)
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    source.addEventListener("message_received", handleUpdate)
+    source.addEventListener("message_sent", handleUpdate)
+    source.addEventListener("conversation_updated", handleUpdate)
+    source.addEventListener("error", () => {
+      source.close()
+    })
+    return () => {
+      source.close()
+    }
+  }, [refreshConversations, refreshMessages, selectedId])
 
   const handleSelectConversation = (id: string) => {
     setSelectedId(id)
     setMobileView("chat")
     setConversations(prev =>
-      prev.map(c => c.id === id ? { ...c, unread: false } : c)
+      prev.map(c => c.id === id ? { ...c, unread: false, unreadCount: 0 } : c)
     )
   }
 
@@ -243,25 +274,7 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({ conversationId: selectedConversation.id, body: content }),
       })
-      const res = await request<{ data: MessageApi[] }>(
-        `/messages/${selectedConversation.id}?limit=100`
-      )
-      const mapped: Message[] = res.data
-        .slice()
-        .reverse()
-        .map(item => ({
-          id: String(item.id),
-          content: item.body,
-          sender:
-            item.message_type === "ai"
-              ? "ai"
-              : item.message_type === "manual"
-                ? "user"
-                : "contact",
-          timestamp: item.timestamp,
-          messageType: item.message_type || null,
-        }))
-      setMessages(prev => ({ ...prev, [selectedConversation.id]: mapped }))
+      await refreshMessages(selectedConversation.id)
     } catch (err) {
       console.error(err)
     }
@@ -401,3 +414,5 @@ export default function DashboardPage() {
     </div>
   )
 }
+
+

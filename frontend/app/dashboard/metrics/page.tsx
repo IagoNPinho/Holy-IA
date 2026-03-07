@@ -9,6 +9,10 @@ type MetricsResponse = {
   ai_messages: number
   manual_messages: number
   active_conversations: number
+  leads_today: number
+  avg_response_time_seconds: number
+  ai_vs_manual_ratio: number
+  media_messages_today: number
 }
 
 export default function MetricsPage() {
@@ -67,6 +71,38 @@ export default function MetricsPage() {
             </CardHeader>
             <CardContent className="text-2xl font-semibold text-foreground">
               {metrics?.active_conversations ?? "--"}
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card">
+            <CardHeader>
+              <CardTitle className="text-foreground text-sm">Leads hoje</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-semibold text-foreground">
+              {metrics?.leads_today ?? "--"}
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card">
+            <CardHeader>
+              <CardTitle className="text-foreground text-sm">Tempo mÃ©dio resposta (s)</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-semibold text-foreground">
+              {metrics?.avg_response_time_seconds ?? "--"}
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card">
+            <CardHeader>
+              <CardTitle className="text-foreground text-sm">AI / Manual</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-semibold text-foreground">
+              {metrics?.ai_vs_manual_ratio ? metrics.ai_vs_manual_ratio.toFixed(2) : "--"}
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card">
+            <CardHeader>
+              <CardTitle className="text-foreground text-sm">MÃ­dias hoje</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-semibold text-foreground">
+              {metrics?.media_messages_today ?? "--"}
             </CardContent>
           </Card>
         </div>

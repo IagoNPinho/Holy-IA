@@ -1,10 +1,14 @@
 // Main entrypoint for the WhatsApp AI support backend (MVP).
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
+const jwt = require("jsonwebtoken");
 
 const { env } = require("./config/env");
 const { migrate } = require("./database/migrations");
 const { initWhatsappClient, getWhatsappClient } = require("./services/whatsappService");
+const { addClient } = require("./services/sseService");
+const { loadPendingFollowups } = require("./services/followUpService");
 const { conversationsRouter } = require("./routes/conversations");
 const { settingsRouter } = require("./routes/settings");
 const { toggleRouter } = require("./routes/toggle");
@@ -40,6 +44,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "1mb" }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Basic request logger.
 app.use((req, _res, next) => {
@@ -52,6 +57,31 @@ app.use((req, _res, next) => {
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+function sseAuthRequired(req, res, next) {
+  const header = req.headers.authorization || "";
+  const tokenFromHeader = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const token = tokenFromHeader || req.query.token;
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const payload = jwt.verify(token, env.JWT_SECRET);
+    req.user = payload;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+}
+
+app.get("/events", sseAuthRequired, (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  addClient(res);
 });
 
 app.use(authRouter);
@@ -77,6 +107,7 @@ async function bootstrap() {
   try {
     await migrate();
     await initWhatsappClient();
+    await loadPendingFollowups();
 
     app.listen(env.PORT, () => {
       log("info", "server_started", { port: env.PORT });

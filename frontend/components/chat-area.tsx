@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Send, Bot, User, ArrowLeft } from "lucide-react"
+import { API_BASE } from "@/lib/api"
 
 export interface Message {
   id: string
@@ -14,6 +15,9 @@ export interface Message {
   sender: "user" | "contact" | "ai"
   timestamp: string
   messageType?: "incoming" | "manual" | "ai" | null
+  mediaType?: string | null
+  mediaUrl?: string | null
+  mimeType?: string | null
 }
 
 interface ChatAreaProps {
@@ -34,6 +38,8 @@ export function ChatArea({
   onBack,
 }: ChatAreaProps) {
   const [inputValue, setInputValue] = useState("")
+  const [autoScroll, setAutoScroll] = useState(true)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   const handleSend = () => {
     if (inputValue.trim()) {
@@ -71,6 +77,43 @@ export function ChatArea({
 
   const formatTime = (value: string) =>
     parseDate(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+
+  useEffect(() => {
+    if (!autoScroll || !scrollRef.current) return
+    const el = scrollRef.current
+    el.scrollTop = el.scrollHeight
+  }, [messages, autoScroll])
+
+  const handleScroll = () => {
+    if (!scrollRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
+    const nearBottom = scrollHeight - (scrollTop + clientHeight) < 120
+    setAutoScroll(nearBottom)
+  }
+
+  const renderMedia = (message: Message) => {
+    if (!message.mediaUrl) return null
+    const src = `${API_BASE}${message.mediaUrl}`
+    const isImage = message.mediaType === "image" || message.mimeType?.startsWith("image/")
+    const isVideo = message.mediaType === "video" || message.mimeType?.startsWith("video/")
+    const isAudio = message.mediaType === "audio" || message.mediaType === "ptt" || message.mimeType?.startsWith("audio/")
+
+    if (isImage) {
+      // eslint-disable-next-line @next/next/no-img-element
+      return <img src={src} alt="Imagem recebida" className="max-w-[260px] rounded-lg" />
+    }
+    if (isVideo) {
+      return <video src={src} controls className="max-w-[260px] rounded-lg" />
+    }
+    if (isAudio) {
+      return <audio src={src} controls className="w-[260px]" />
+    }
+    return (
+      <a href={src} target="_blank" rel="noreferrer" className="text-xs underline">
+        Baixar arquivo
+      </a>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -118,7 +161,11 @@ export function ChatArea({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-6 space-y-6"
+      >
         {groupedMessages.map((group) => (
           <div key={group.date} className="space-y-4">
             <div className="flex items-center gap-3">
@@ -156,12 +203,15 @@ export function ChatArea({
                       ? "bg-success/20 border border-success/30"
                       : "bg-primary text-primary-foreground"
                 )}>
-                  <p className={cn(
-                    "text-sm break-words whitespace-pre-wrap",
-                    message.sender === "user" ? "text-primary-foreground" : "text-foreground"
-                  )}>
-                    {message.content}
-                  </p>
+                  {renderMedia(message)}
+                  {message.content ? (
+                    <p className={cn(
+                      "text-sm break-words whitespace-pre-wrap",
+                      message.sender === "user" ? "text-primary-foreground" : "text-foreground"
+                    )}>
+                      {message.content}
+                    </p>
+                  ) : null}
                   <div className="flex items-center gap-1.5 mt-1">
                     {message.messageType === "ai" && (
                       <Bot className="w-3 h-3 text-success" />

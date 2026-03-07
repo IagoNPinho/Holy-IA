@@ -1,10 +1,18 @@
 // WhatsApp integration and message processing.
+const path = require("path");
+const fs = require("fs");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const { env } = require("../config/env");
 const { get, run, all } = require("../database/db");
 const { generateAIResponse } = require("./aiService");
 const { getAiEnabled } = require("./settingsService");
+const { detectIntent } = require("./intentRouter");
+const { getPromptByIntent } = require("./promptRouter");
+const { getState, transitionState } = require("./conversationState");
+const { splitAiResponse } = require("./aiUtils");
+const { sendEvent } = require("./sseService");
+const { scheduleFollowups } = require("./followUpService");
 
 let client = null;
 let latestQr = null;
@@ -31,9 +39,11 @@ async function ensureConversation(contactId, contactName) {
   );
 
   if (!conversation) {
+    const globalAiEnabled = await getAiEnabled();
+    const aiEnabledValue = globalAiEnabled ? 1 : 0;
     await run(
-      "INSERT OR IGNORE INTO conversations (contact_id, name, ai_enabled, updated_at) VALUES (?, ?, 1, datetime('now'))",
-      [contactId, contactName || null]
+      "INSERT OR IGNORE INTO conversations (contact_id, name, ai_enabled, updated_at) VALUES (?, ?, ?, datetime('now'))",
+      [contactId, contactName || null, aiEnabledValue]
     );
     conversation = await get(
       "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
@@ -52,6 +62,86 @@ async function ensureConversation(contactId, contactName) {
   return conversation;
 }
 
+async function ensureContact(contactId) {
+  const row = await get("SELECT id FROM contacts WHERE phone_number = ?", [contactId]);
+  if (!row) {
+    await run("INSERT OR IGNORE INTO contacts (phone_number) VALUES (?)", [contactId]);
+  }
+  await run("UPDATE contacts SET last_seen_at = datetime('now') WHERE phone_number = ?", [contactId]);
+}
+
+async function upsertPatientMemory({
+  contactId,
+  patientName,
+  lastIntent,
+  lastProcedureDiscussed,
+}) {
+  await run(
+    `
+    INSERT OR IGNORE INTO patient_memory (contact_id, patient_name, last_intent, last_procedure_discussed)
+    VALUES (?, ?, ?, ?)
+    `,
+    [contactId, patientName || null, lastIntent || null, lastProcedureDiscussed || null]
+  );
+
+  await run(
+    `
+    UPDATE patient_memory
+    SET
+      patient_name = COALESCE(?, patient_name),
+      last_intent = COALESCE(?, last_intent),
+      last_procedure_discussed = COALESCE(?, last_procedure_discussed),
+      updated_at = datetime('now')
+    WHERE contact_id = ?
+    `,
+    [patientName || null, lastIntent || null, lastProcedureDiscussed || null, contactId]
+  );
+}
+
+function extractPatientName(text) {
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  const patterns = [
+    /meu nome é\s+([a-zÀ-ÿ\s]{2,40})/i,
+    /meu nome eh\s+([a-zÀ-ÿ\s]{2,40})/i,
+    /eu sou\s+([a-zÀ-ÿ\s]{2,40})/i,
+    /pode me chamar de\s+([a-zÀ-ÿ\s]{2,40})/i,
+    /^sou\s+([a-zÀ-ÿ\s]{2,40})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim().replace(/\s+/g, " ");
+      if (name.length >= 2) return name;
+    }
+  }
+  return null;
+}
+
+function extractProcedure(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  const known = [
+    "botox",
+    "preenchimento",
+    "limpeza de pele",
+    "microagulhamento",
+    "peeling",
+    "laser",
+    "sobrancelha",
+    "cílios",
+    "cilios",
+    "lábios",
+    "labios",
+    "depilação",
+    "depilacao",
+  ];
+  for (const item of known) {
+    if (lower.includes(item)) return item;
+  }
+  return null;
+}
+
 async function loadMessageSchema() {
   if (messageSchema) return messageSchema;
   const rows = await all(`PRAGMA table_info(messages)`);
@@ -67,15 +157,15 @@ async function loadMessageSchema() {
   return messageSchema;
 }
 
-async function saveMessage({ conversationId, fromMe, body, timestamp, messageType }) {
+async function saveMessage({ conversationId, fromMe, body, timestamp, messageType, intent, mediaType, mediaUrl, mimeType }) {
   const schema = await loadMessageSchema();
   const direction = fromMe ? "out" : "in";
   const finalType = messageType || (fromMe ? "manual" : "incoming");
   if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
     await run(
       `
-      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -84,6 +174,10 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         timestamp || new Date().toISOString(),
         direction,
         finalType,
+        intent || null,
+        mediaType || null,
+        mediaUrl || null,
+        mimeType || null,
       ]
     );
     return;
@@ -92,10 +186,20 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
   if (schema.hasDirection && schema.hasMessageType) {
     await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [conversationId, body, timestamp || new Date().toISOString(), direction, finalType]
+      [
+        conversationId,
+        body,
+        timestamp || new Date().toISOString(),
+        direction,
+        finalType,
+        intent || null,
+        mediaType || null,
+        mediaUrl || null,
+        mimeType || null,
+      ]
     );
     return;
   }
@@ -103,30 +207,48 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
   if (schema.hasDirection) {
     await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [conversationId, body, timestamp || new Date().toISOString(), direction]
+      [
+        conversationId,
+        body,
+        timestamp || new Date().toISOString(),
+        direction,
+        intent || null,
+        mediaType || null,
+        mediaUrl || null,
+        mimeType || null,
+      ]
     );
     return;
   }
 
   await run(
     `
-    INSERT INTO messages (conversation_id, from_me, body, timestamp)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [conversationId, fromMe ? 1 : 0, body, timestamp || new Date().toISOString()]
+    [
+      conversationId,
+      fromMe ? 1 : 0,
+      body,
+      timestamp || new Date().toISOString(),
+      intent || null,
+      mediaType || null,
+      mediaUrl || null,
+      mimeType || null,
+    ]
   );
 }
 
-async function buildHistory(conversationId, limit = 8) {
+async function buildHistory(conversationId, limit = 10) {
   const rows = await all(
     `
-    SELECT from_me, body
+    SELECT from_me, body, created_at
     FROM messages
     WHERE conversation_id = ?
-    ORDER BY id DESC
+    ORDER BY COALESCE(created_at, timestamp, id) DESC
     LIMIT ?
     `,
     [conversationId, limit]
@@ -136,8 +258,9 @@ async function buildHistory(conversationId, limit = 8) {
     .reverse()
     .map((row) => ({
       role: row.from_me ? "assistant" : "user",
-      content: row.body,
-    }));
+      content: typeof row.body === "string" ? row.body.trim() : "",
+    }))
+    .filter((row) => row.content && (row.role === "user" || row.role === "assistant"));
 }
 
 async function updateConversation({ id, name, lastMessage }) {
@@ -153,6 +276,20 @@ async function updateConversation({ id, name, lastMessage }) {
   );
 }
 
+async function updateConversationIncoming({ id, name, lastMessage }) {
+  await run(
+    `
+    UPDATE conversations
+    SET name = COALESCE(?, name),
+        last_message = ?,
+        updated_at = datetime('now'),
+        unread_count = COALESCE(unread_count, 0) + 1
+    WHERE id = ?
+    `,
+    [name || null, lastMessage || null, id]
+  );
+}
+
 async function saveAiLog({ conversationId, prompt, response }) {
   await run(
     `
@@ -161,6 +298,31 @@ async function saveAiLog({ conversationId, prompt, response }) {
     `,
     [conversationId, prompt, response]
   );
+}
+
+async function saveIncomingMedia(message) {
+  if (!message?.hasMedia) return null;
+  const media = await message.downloadMedia();
+  if (!media || !media.data) return null;
+
+  const uploadsDir = path.join(__dirname, "..", "uploads");
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  const extFromMime = media.mimetype ? media.mimetype.split("/")[1] : "";
+  const extFromName = media.filename ? path.extname(media.filename).replace(".", "") : "";
+  const ext = extFromName || extFromMime || "bin";
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const filePath = path.join(uploadsDir, filename);
+  const buffer = Buffer.from(media.data, "base64");
+  fs.writeFileSync(filePath, buffer);
+
+  return {
+    mediaType: message.type || "media",
+    mimeType: media.mimetype || null,
+    mediaUrl: `/uploads/${filename}`,
+  };
 }
 
 async function handleIncomingMessage(message) {
@@ -181,6 +343,7 @@ async function handleIncomingMessage(message) {
     const contactName = contact?.pushname || contact?.name || contactId;
 
     const conversation = await ensureConversation(contactId, contactName);
+    await ensureContact(contactId);
     const now = Date.now();
     const messageId = message?.id?.id || message?.id?._serialized;
     const fallbackKey = `${contactId}:${message?.body || ""}:${message?.timestamp || ""}`;
@@ -207,22 +370,58 @@ async function handleIncomingMessage(message) {
         }
       }
     }
-    const timestamp = message.timestamp
-      ? new Date(message.timestamp * 1000).toISOString()
-      : new Date().toISOString();
+  const timestamp = message.timestamp
+    ? new Date(message.timestamp * 1000).toISOString()
+    : new Date().toISOString();
 
-    await saveMessage({
+    const { intent } = detectIntent(message.body);
+    const patientName = extractPatientName(message.body);
+    const shouldUpdateProcedure = intent === "procedure_question" || intent === "price_question";
+    const procedure = shouldUpdateProcedure ? extractProcedure(message.body) : null;
+    await upsertPatientMemory({
+      contactId,
+      patientName,
+      lastIntent: intent,
+      lastProcedureDiscussed: procedure,
+    });
+    const prevState = getState(conversation.id);
+    const nextState = transitionState(conversation.id, intent);
+    const intentPrompt = getPromptByIntent(intent);
+    const statePrompt = `Estado da conversa: ${prevState} -> ${nextState}.`;
+    const extraSystemPrompt = `${intentPrompt}\n${statePrompt}`;
+    const media = await saveIncomingMedia(message);
+  const mediaPreview = media
+    ? media.mediaType === "image"
+      ? "📷 Foto"
+      : media.mediaType === "video"
+        ? "🎥 Vídeo"
+        : media.mediaType === "audio" || media.mediaType === "ptt"
+          ? "🎧 Áudio"
+          : "📎 Documento"
+    : null;
+  const lastMessageText = message.body || mediaPreview || "";
+
+  await saveMessage({
+    conversationId: conversation.id,
+    fromMe: false,
+    body: message.body,
+    timestamp,
+    messageType: "incoming",
+    intent,
+    mediaType: media?.mediaType || null,
+    mediaUrl: media?.mediaUrl || null,
+    mimeType: media?.mimeType || null,
+  });
+  await updateConversationIncoming({
+    id: conversation.id,
+    name: contactName,
+    lastMessage: lastMessageText,
+  });
+    sendEvent("message_received", {
       conversationId: conversation.id,
-      fromMe: false,
-      body: message.body,
-      timestamp,
-      messageType: "incoming",
+      contactId,
     });
-    await updateConversation({
-      id: conversation.id,
-      name: contactName,
-      lastMessage: message.body,
-    });
+    sendEvent("conversation_updated", { conversationId: conversation.id });
 
     const block = await get("SELECT contact_id FROM ai_blocklist WHERE contact_id = ?", [contactId]);
     if (block) {
@@ -230,30 +429,68 @@ async function handleIncomingMessage(message) {
       return;
     }
     const aiEnabled = await getAiEnabled();
+    if (!aiEnabled) {
+      log("info", "ai_disabled_global", { contactId });
+      return;
+    }
     if (conversation?.ai_enabled === 0) {
       log("info", "ai_disabled_for_conversation", { contactId, conversationId: conversation?.id });
       return;
     }
-    if (conversation?.ai_enabled == null && !aiEnabled) {
-      log("info", "ai_disabled_skip_reply", { contactId });
-      return;
+
+    await scheduleFollowups({ contactId, conversationId: conversation.id });
+
+    const history = await buildHistory(conversation.id, 10);
+    const memory = await get(
+      `
+      SELECT patient_name, interests, last_procedure_discussed, last_intent, notes
+      FROM patient_memory
+      WHERE contact_id = ?
+      `,
+      [contactId]
+    );
+    const memoryLines = [];
+    if (memory?.patient_name) memoryLines.push(`Nome: ${memory.patient_name}`);
+    if (memory?.interests) memoryLines.push(`Interesses: ${memory.interests}`);
+    if (memory?.last_procedure_discussed)
+      memoryLines.push(`Último procedimento discutido: ${memory.last_procedure_discussed}`);
+    if (memory?.last_intent) memoryLines.push(`Última intenção: ${memory.last_intent}`);
+    if (memory?.notes) memoryLines.push(`Notas: ${memory.notes}`);
+    const memoryPrompt = memoryLines.length ? `Contexto do paciente:\n${memoryLines.join("\n")}` : "";
+
+    const reply = await generateAIResponse({
+      message: message.body,
+      history,
+      extraSystemPrompt: memoryPrompt ? `${extraSystemPrompt}\n${memoryPrompt}` : extraSystemPrompt,
+      contactId,
+    });
+    const responses = splitAiResponse(reply, { ideal: 120, max: 220, maxMessages: 3 });
+    const messagesToSend = responses.length ? responses : [reply];
+
+    await new Promise((resolve) => setTimeout(resolve, env.HUMAN_BASE_DELAY_MS));
+
+    for (let i = 0; i < messagesToSend.length; i += 1) {
+      const body = messagesToSend[i];
+      await client.sendMessage(contactId, body);
+      await saveMessage({
+        conversationId: conversation.id,
+        fromMe: true,
+        body,
+        timestamp: new Date().toISOString(),
+        messageType: "ai",
+      });
+      await updateConversation({
+        id: conversation.id,
+        name: contactName,
+        lastMessage: body,
+      });
+      sendEvent("message_sent", { conversationId: conversation.id });
+      sendEvent("conversation_updated", { conversationId: conversation.id });
+      if (i < messagesToSend.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, env.HUMAN_SPLIT_DELAY_MS));
+      }
     }
 
-    const reply = await generateAIResponse(message.body);
-
-    await client.sendMessage(contactId, reply);
-    await saveMessage({
-      conversationId: conversation.id,
-      fromMe: true,
-      body: reply,
-      timestamp: new Date().toISOString(),
-      messageType: "ai",
-    });
-    await updateConversation({
-      id: conversation.id,
-      name: contactName,
-      lastMessage: reply,
-    });
     await saveAiLog({
       conversationId: conversation.id,
       prompt: message.body,
@@ -356,6 +593,7 @@ async function disconnect() {
 async function sendManualMessage({ to, body }) {
   if (!client) throw new Error("WhatsApp client not initialized");
   const convo = await ensureConversation(to, to);
+  await ensureContact(to);
   await client.sendMessage(to, body);
   await saveMessage({
     conversationId: convo.id,
@@ -369,6 +607,8 @@ async function sendManualMessage({ to, body }) {
     name: convo.name || to,
     lastMessage: body,
   });
+  sendEvent("message_sent", { conversationId: convo.id });
+  sendEvent("conversation_updated", { conversationId: convo.id });
 }
 
 // Mass sending logic with basic safety controls (no spam behavior).
@@ -416,6 +656,8 @@ async function syncInitialChats(clientInstance) {
     throw new Error("WhatsApp client not initialized");
   }
 
+  const globalAiEnabled = await getAiEnabled();
+  const aiEnabledValue = globalAiEnabled ? 1 : 0;
   const chats = await activeClient.getChats();
   const directChats = chats.filter((chat) => !chat.isGroup);
   let chatsSaved = 0;
@@ -430,11 +672,12 @@ async function syncInitialChats(clientInstance) {
     const result = await run(
       `
       INSERT OR IGNORE INTO conversations (contact_id, name, last_message, updated_at, ai_enabled)
-      VALUES (?, ?, ?, ?, 1)
+      VALUES (?, ?, ?, ?, ?)
       `,
-      [contactId, name, lastMessage, updatedAt]
+      [contactId, name, lastMessage, updatedAt, aiEnabledValue]
     );
     if (result?.changes) chatsSaved += 1;
+    await ensureContact(contactId);
   }
 
   return { chatsFound: directChats.length, chatsSaved };

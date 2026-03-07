@@ -1,6 +1,9 @@
-const axios = require("axios");
-const { groqApiKey } = require("../config/env");
-const { get } = require("../database/db");
+﻿const axios = require("axios");
+const OpenAI = require("openai");
+const { env, groqApiKey } = require("../config/env");
+const { get, run } = require("../database/db");
+const { detectIntent } = require("./intentRouter");
+const { selectModel } = require("./modelRouter");
 
 async function getClinicSettings() {
   return get(
@@ -10,31 +13,24 @@ async function getClinicSettings() {
 
 function buildSystemPrompt(settings) {
   const clinicName = settings?.clinic_name || "Holy Spa Clinic";
-  const tone = settings?.tone || "acolhedor, feminino, elegante, profissional, natural e simpático";
+  const tone = settings?.tone || "simpático, profissional, natural e acolhedor";
   const procedures = settings?.procedures || "";
   const workingHours = settings?.working_hours || "";
   const confirmationMessage = settings?.confirmation_message || "";
 
   return [
-    `Você é a assistente de atendimento da ${clinicName}.`,
-    "A Holy Spa Clinic é uma clínica estética localizada em Fortaleza e liderada pela especialista Samella Soares Castro.",
-    "Especialidades: sobrancelhas, lábios, cílios, depilação, estética facial e estética geral.",
-    "Missão: fortalecer a identidade, autoestima e autonomia das pacientes através da estética.",
-    `Tom de comunicação: ${tone}.`,
-    "Use emojis leves quando fizer sentido (ex.: 😊 ✨ 💖).",
-    "Regras:",
-    "1. Nunca diga que é uma inteligência artificial.",
-    "2. Responda como parte da equipe da clínica.",
-    "3. Linguagem natural e respostas curtas.",
-    "4. Conduza a conversa para entender o interesse da paciente.",
-    "5. Priorize levar a conversa para o agendamento de avaliação.",
-    "Fluxo sugerido:",
-    "• Se for a primeira mensagem: \"Olá! 😊 Seja muito bem-vinda à Holy Spa Clinic. Meu nome é Ana e faço parte da equipe de atendimento da clínica. Como posso te ajudar hoje?\"",
-    "• Se não tiver nome: \"Perfeito! 😊 Antes de continuarmos, posso saber seu nome?\"",
-    "• Perguntar procedimento: \"Você tem interesse em algum procedimento específico? Trabalhamos bastante com sobrancelhas, cílios, lábios e tratamentos estéticos.\"",
-    "• Após interesse: \"Ótima escolha! ✨ Esse é um procedimento muito procurado aqui na clínica. Você gostaria de agendar uma avaliação?\"",
-    "• Se sim: \"Perfeito 😊 Vou verificar os horários disponíveis para você.\"",
-    procedures ? `Procedimentos adicionais informados: ${procedures}` : null,
+    `Você é a atendente virtual da clínica ${clinicName}.`,
+    `Tom: ${tone}.`,
+    "Objetivo: atender, qualificar e conduzir ao agendamento.",
+    "Fluxo: responda e sempre faça uma pergunta de continuidade.",
+    "Se pedirem preço: responda breve e convide a agendar.",
+    "Se perguntarem procedimento: explique benefício e pergunte se já fez.",
+    "Se houver interesse: ofereça verificar horários.",
+    "Estilo: PT-BR, simpática, natural, sem parecer robótica.",
+    "Regras: nunca diga que é IA.",
+    "Tamanho: ideal até 120 caracteres; máximo 220.",
+    "Se precisar, divida em até 3 mensagens curtas.",
+    procedures ? `Procedimentos informados pela clínica: ${procedures}` : null,
     workingHours ? `Horário de atendimento: ${workingHours}` : null,
     confirmationMessage ? `Mensagem de confirmação: ${confirmationMessage}` : null,
   ]
@@ -42,28 +38,58 @@ function buildSystemPrompt(settings) {
     .join("\n");
 }
 
-async function generateAIResponse(message) {
-  if (!groqApiKey) {
-    throw new Error("GROQ_API_KEY not configured");
-  }
+async function generateAIResponse({ message, history, extraSystemPrompt, contactId }) {
   const settings = await getClinicSettings();
-  const systemPrompt = buildSystemPrompt(settings);
-  try {
+  const basePrompt = buildSystemPrompt(settings);
+  const systemPrompt =
+    typeof extraSystemPrompt === "string" && extraSystemPrompt.trim()
+      ? `${basePrompt}\n\n${extraSystemPrompt.trim()}`
+      : basePrompt;
+  const safeHistory = Array.isArray(history)
+    ? history
+        .filter((item) => item && typeof item.content === "string" && typeof item.role === "string")
+        .map((item) => ({ role: item.role, content: item.content }))
+    : [];
+  const trimmedHistory = safeHistory.slice(-6);
+  const userMessage = typeof message === "string" ? message : String(message ?? "");
+  const finalMessages = [
+    { role: "system", content: systemPrompt },
+    ...trimmedHistory,
+    { role: "user", content: userMessage },
+  ];
+
+  const { intent } = detectIntent(userMessage);
+  const provider = selectModel(intent);
+
+  const callOpenAI = async () => {
+    if (!env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY not configured");
+    }
+    const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+    const response = await openai.chat.completions.create({
+      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      messages: finalMessages,
+      temperature: 0.6,
+      max_tokens: 220,
+    });
+    return {
+      content: response.choices[0].message.content,
+      model: env.OPENAI_MODEL || "gpt-4o-mini",
+      tokens: response.usage?.total_tokens || null,
+    };
+  };
+
+  const callGroq = async () => {
+    if (!groqApiKey) {
+      throw new Error("GROQ_API_KEY not configured");
+    }
     const response = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
+      `${env.GROQ_BASE_URL}/chat/completions`,
       {
-        model: "llama-3.1-8b-instant",
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: message,
-          },
-        ],
-        temperature: 0.7,
+        model: env.GROQ_MODEL,
+        messages: finalMessages,
+        temperature: 0.6,
+        max_tokens: 220,
       },
       {
         headers: {
@@ -72,12 +98,64 @@ async function generateAIResponse(message) {
         },
       }
     );
+    return {
+      content: response.data.choices[0].message.content,
+      model: env.GROQ_MODEL,
+      tokens: response.data.usage?.total_tokens || null,
+    };
+  };
 
-    return response.data.choices[0].message.content;
+  const logUsage = async (provider, model, tokens) => {
+    try {
+      await run(
+        `
+        INSERT INTO ai_logs (contact_id, intent, provider, model, tokens)
+        VALUES (?, ?, ?, ?, ?)
+        `,
+        [contactId || null, intent || null, provider, model, tokens]
+      );
+      if (contactId) {
+        console.info(`[AI] provider=${provider} intent=${intent} contact=${contactId}`);
+      } else {
+        console.info(`[AI] provider=${provider} intent=${intent}`);
+      }
+    } catch (error) {
+      console.warn("ai_log_failed", error?.message || error);
+    }
+  };
+
+  try {
+    if (provider === "openai") {
+      const result = await callOpenAI();
+      await logUsage("openai", result.model, result.tokens);
+      return result.content;
+    }
+    const result = await callGroq();
+    await logUsage("groq", result.model, result.tokens);
+    return result.content;
   } catch (error) {
-    console.error("Erro Groq:", error.response?.data || error.message);
-    return "No momento estamos com instabilidade. Pode me dizer qual procedimento deseja?";
+    console.error(`Erro ${provider === "openai" ? "OpenAI" : "Groq"}:`, error.response?.data || error.message);
+  }
+
+  try {
+    if (provider === "openai") {
+      const result = await callGroq();
+      await logUsage("groq", result.model, result.tokens);
+      return result.content;
+    }
+    const result = await callOpenAI();
+    await logUsage("openai", result.model, result.tokens);
+    return result.content;
+  } catch (error) {
+    console.error("Erro fallback:", error.response?.data || error.message);
+    return "Oi! 😊 Posso te ajudar melhor se você me contar qual procedimento procura.";
   }
 }
 
 module.exports = { generateAIResponse };
+
+
+
+
+
+

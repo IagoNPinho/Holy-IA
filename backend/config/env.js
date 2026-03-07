@@ -19,6 +19,8 @@ const env = {
   GROQ_API_KEY: requireEnv("GROQ_API_KEY", "") || process.env.GROQ_API_KEY,
   GROQ_BASE_URL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
   GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
+  OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-4o-mini",
   AI_DEFAULT_ENABLED: process.env.AI_DEFAULT_ENABLED === "false" ? false : true,
   BULK_MAX_RECIPIENTS: Number(process.env.BULK_MAX_RECIPIENTS || 50),
   BULK_MIN_DELAY_MS: Number(process.env.BULK_MIN_DELAY_MS || 1200),
@@ -26,6 +28,8 @@ const env = {
   AUTH_EMAIL: process.env.AUTH_EMAIL || "",
   AUTH_PASSWORD: process.env.AUTH_PASSWORD || "",
   JWT_SECRET: process.env.JWT_SECRET || "holy-ia-secret",
+  HUMAN_BASE_DELAY_MS: Number(process.env.HUMAN_BASE_DELAY_MS || 1500),
+  HUMAN_SPLIT_DELAY_MS: Number(process.env.HUMAN_SPLIT_DELAY_MS || 600),
 };
 
 const groqApiKey = env.GROQ_API_KEY;
