@@ -1,15 +1,16 @@
 ﻿"use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { cn } from "@/utils/utils"
-import { ConversationList, type Conversation } from "@/modules/conversations/components/conversation-list"
-import { ChatArea, type Message } from "@/modules/conversations/components/chat-area"
+import { ConversationList } from "@/modules/conversations/components/conversation-list"
+import { ChatArea } from "@/modules/conversations/components/chat-area"
 import { EmptyChat } from "@/modules/conversations/components/empty-chat"
 import { Button } from "@/components/ui/button"
-import { API_BASE, request } from "@/services/api"
+import { request } from "@/services/api"
 import { useWhatsAppConnection } from "@/hooks/use-whatsapp-connection"
 import { WhatsAppConnector } from "@/modules/whatsapp/components/whatsapp-connector"
 import { useEvents } from "@/hooks/use-events"
+import { useConversationList, useConversationStore, useSelectedConversation } from "@/store/conversation-store"
 
 type ConversationApi = {
   id: number
@@ -33,30 +34,18 @@ type MessageApi = {
 }
 
 export default function DashboardPage() {
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Record<string, Message[]>>({})
+  const selectedConversation = useSelectedConversation()
+  const conversationList = useConversationList()
+  const setConversations = useConversationStore((state) => state.setConversations)
+  const setMessages = useConversationStore((state) => state.setMessages)
+  const upsertConversation = useConversationStore((state) => state.upsertConversation)
+  const selectedId = useConversationStore((state) => state.selectedId)
+
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
-  const [conversationsOffset, setConversationsOffset] = useState<number>(0)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [mobileView, setMobileView] = useState<"list" | "chat">("list")
   const { qr, connected } = useWhatsAppConnection()
-
-  const selectedConversation = useMemo(
-    () => conversations.find(c => c.id === selectedId),
-    [conversations, selectedId]
-  )
-  const selectedMessages = selectedId ? messages[selectedId] || [] : []
-
-  const sortedConversations = useMemo(() => {
-    return [...conversations].sort((a, b) => {
-      const at = a.timestamp ? new Date(a.timestamp).getTime() : 0
-      const bt = b.timestamp ? new Date(b.timestamp).getTime() : 0
-      return bt - at
-    })
-  }, [conversations])
 
   useEffect(() => {
     let isActive = true
@@ -79,43 +68,31 @@ export default function DashboardPage() {
   }, [])
 
   const refreshConversations = useCallback(async (limitOverride?: number) => {
-    const limit = Math.max(limitOverride || 20, conversations.length || 0)
+    const limit = Math.max(limitOverride || 20, conversationList.length || 0)
     const res = await request<{ data: ConversationApi[] }>(
       `/conversations?limit=${limit}&offset=0`
     )
-    const mapped = res.data.map(item => ({
+    const mapped = res.data.map((item) => ({
       id: String(item.id),
       contactName: item.name || "",
       lastMessage: item.last_message || "",
       timestamp: item.updated_at || "",
-      unread: (item.unread_count || 0) > 0,
-      unreadCount: item.unread_count || 0,
+      unread: item.unread_count || 0,
       aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
     }))
-    setConversations(prev => {
-      if (!prev.length) return mapped
-      const byId = new Map(prev.map(c => [c.id, c]))
-      const incomingIds = new Set(mapped.map(c => c.id))
-      const mergedTop = mapped.map(c => ({ ...byId.get(c.id), ...c }))
-      const rest = prev.filter(c => !incomingIds.has(c.id))
-      return [...mergedTop, ...rest]
-    })
-    setConversationsOffset(prev => Math.max(prev, mapped.length))
-  }, [conversations.length])
+    setConversations(mapped)
+  }, [conversationList.length, setConversations])
 
   useEffect(() => {
     let isActive = true
     const loadConversations = async () => {
-      setIsLoading(true)
       try {
         await refreshConversations(20)
         if (!isActive) return
         setConversationsError(null)
       } catch (err) {
-        setConversationsError("NÃ£o foi possÃ­vel carregar as conversas. Verifique sua sessÃ£o.")
+        setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
         console.error(err)
-      } finally {
-        if (isActive) setIsLoading(false)
       }
     }
     loadConversations()
@@ -134,23 +111,21 @@ export default function DashboardPage() {
 
   const handleLoadMore = async () => {
     if (isLoadingMore) return
-    const nextOffset = conversations.length
+    const nextOffset = conversationList.length
     setIsLoadingMore(true)
     try {
       const res = await request<{ data: ConversationApi[] }>(
         `/conversations?limit=20&offset=${nextOffset}`
       )
-      const mapped = res.data.map(item => ({
+      const mapped = res.data.map((item) => ({
         id: String(item.id),
         contactName: item.name || "",
         lastMessage: item.last_message || "",
         timestamp: item.updated_at || "",
-        unread: (item.unread_count || 0) > 0,
-        unreadCount: item.unread_count || 0,
+        unread: item.unread_count || 0,
         aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
       }))
-      setConversations(prev => [...prev, ...mapped])
-      setConversationsOffset(nextOffset + mapped.length)
+      setConversations([...conversationList, ...mapped])
     } catch (err) {
       console.error(err)
     } finally {
@@ -160,11 +135,12 @@ export default function DashboardPage() {
 
   const refreshMessages = useCallback(async (conversationId: string) => {
     const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=100`)
-    const mapped: Message[] = res.data
+    const mapped = res.data
       .slice()
       .reverse()
-      .map(item => ({
+      .map((item) => ({
         id: String(item.id),
+        conversationId,
         content: item.body,
         sender:
           item.message_type === "ai"
@@ -178,8 +154,8 @@ export default function DashboardPage() {
         mediaUrl: item.media_url || null,
         mimeType: item.mime_type || null,
       }))
-    setMessages(prev => ({ ...prev, [conversationId]: mapped }))
-  }, [])
+    setMessages(conversationId, mapped)
+  }, [setMessages])
 
   useEffect(() => {
     let isActive = true
@@ -215,13 +191,9 @@ export default function DashboardPage() {
   useEvents("message_sent", handleUpdate)
   useEvents("conversation_updated", handleUpdate)
 
-  const handleSelectConversation = (id: string) => {
-    setSelectedId(id)
-    setMobileView("chat")
-    setConversations(prev =>
-      prev.map(c => c.id === id ? { ...c, unread: false, unreadCount: 0 } : c)
-    )
-  }
+  useEffect(() => {
+    if (selectedId) setMobileView("chat")
+  }, [selectedId])
 
   const handleBackToList = () => {
     setMobileView("list")
@@ -237,9 +209,7 @@ export default function DashboardPage() {
           body: JSON.stringify({ enabled }),
         }
       )
-      setConversations(prev =>
-        prev.map(c => (c.id === selectedConversation.id ? { ...c, aiEnabled: res.aiEnabled } : c))
-      )
+      upsertConversation({ ...selectedConversation, aiEnabled: res.aiEnabled })
     } catch (err) {
       console.error(err)
     }
@@ -273,11 +243,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="flex-1">
-            <ConversationList
-              conversations={sortedConversations}
-              selectedId={selectedId}
-              onSelect={handleSelectConversation}
-            />
+            <ConversationList />
           </div>
           <div className="p-3 border-t border-border bg-card">
             <Button
@@ -316,14 +282,7 @@ export default function DashboardPage() {
         )}
 
         {selectedConversation ? (
-          <ChatArea
-            contactName={selectedConversation.contactName}
-            messages={selectedMessages}
-            aiEnabled={selectedConversation.aiEnabled ?? false}
-            onToggleAi={handleToggleAi}
-            onSendMessage={handleSendMessage}
-            onBack={handleBackToList}
-          />
+          <ChatArea onToggleAi={handleToggleAi} onSendMessage={handleSendMessage} onBack={handleBackToList} />
         ) : (
           <EmptyChat />
         )}
@@ -331,6 +290,8 @@ export default function DashboardPage() {
     </div>
   )
 }
+
+
 
 
 

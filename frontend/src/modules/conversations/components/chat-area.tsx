@@ -1,6 +1,7 @@
 ﻿"use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useMemo, useState } from "react"
+import { Virtuoso } from "react-virtuoso"
 import { cn } from "@/utils/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -8,38 +9,19 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Send, Bot, User, ArrowLeft } from "lucide-react"
 import { API_BASE } from "@/services/api"
-
-export interface Message {
-  id: string
-  content: string
-  sender: "user" | "contact" | "ai"
-  timestamp: string
-  messageType?: "incoming" | "manual" | "ai" | null
-  mediaType?: string | null
-  mediaUrl?: string | null
-  mimeType?: string | null
-}
+import { useConversationStore, useMessagesForSelected, useSelectedConversation } from "@/store/conversation-store"
 
 interface ChatAreaProps {
-  contactName: string
-  messages: Message[]
-  aiEnabled: boolean
   onToggleAi: (enabled: boolean) => void
   onSendMessage: (content: string) => void
   onBack?: () => void
 }
 
-export function ChatArea({
-  contactName,
-  messages,
-  aiEnabled,
-  onToggleAi,
-  onSendMessage,
-  onBack,
-}: ChatAreaProps) {
+export function ChatArea({ onToggleAi, onSendMessage, onBack }: ChatAreaProps) {
   const [inputValue, setInputValue] = useState("")
-  const [autoScroll, setAutoScroll] = useState(true)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const selectedConversation = useSelectedConversation()
+  const messages = useMessagesForSelected()
+  const typing = useConversationStore((state) => state.typing)
 
   const handleSend = () => {
     if (inputValue.trim()) {
@@ -55,43 +37,37 @@ export function ChatArea({
     }
   }
 
+  if (!selectedConversation) return null
+  const { contactName, aiEnabled, stage } = selectedConversation
+
   const initials = contactName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
   const parseDate = (value: string) => {
-    const asNumber = Number(value);
+    const asNumber = Number(value)
     if (!Number.isNaN(asNumber) && asNumber > 0) {
-      return new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber);
+      return new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
     }
-    return new Date(value);
-  };
-
-  const groupedMessages = messages.reduce<{ date: string; items: Message[] }[]>((acc, message) => {
-    const date = parseDate(message.timestamp).toLocaleDateString("pt-BR")
-    const last = acc[acc.length - 1]
-    if (!last || last.date !== date) {
-      acc.push({ date, items: [message] })
-    } else {
-      last.items.push(message)
-    }
-    return acc
-  }, [])
-
-  const formatTime = (value: string) =>
-    parseDate(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-
-  useEffect(() => {
-    if (!autoScroll || !scrollRef.current) return
-    const el = scrollRef.current
-    el.scrollTop = el.scrollHeight
-  }, [messages, autoScroll])
-
-  const handleScroll = () => {
-    if (!scrollRef.current) return
-    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
-    const nearBottom = scrollHeight - (scrollTop + clientHeight) < 120
-    setAutoScroll(nearBottom)
+    return new Date(value)
   }
 
-  const renderMedia = (message: Message) => {
+  const formatTime = (value: string) => {
+    if (!value) return ""
+    return parseDate(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+  }
+
+  const messageMeta = useMemo(() => {
+    return messages.map((message, index) => {
+      const currentDate = parseDate(message.timestamp).toLocaleDateString("pt-BR")
+      const prev = messages[index - 1]
+      const prevDate = prev ? parseDate(prev.timestamp).toLocaleDateString("pt-BR") : null
+      return {
+        message,
+        showDate: currentDate !== prevDate,
+        dateLabel: currentDate,
+      }
+    })
+  }, [messages])
+
+  const renderMedia = (message: any) => {
     if (!message.mediaUrl) return null
     const src = `${API_BASE}${message.mediaUrl}`
     const isImage = message.mediaType === "image" || message.mimeType?.startsWith("image/")
@@ -115,9 +91,10 @@ export function ChatArea({
     )
   }
 
+  const stageLabel = stage ? stage.replace("_", " ") : null
+
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card">
         <div className="flex items-center gap-3">
           {onBack && (
@@ -137,100 +114,130 @@ export function ChatArea({
           </Avatar>
           <div>
             <h2 className="font-semibold text-foreground">{contactName}</h2>
-            <p className="text-xs text-muted-foreground">WhatsApp</p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>WhatsApp</span>
+              {stageLabel && (
+                <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px]">
+                  {stageLabel}
+                </span>
+              )}
+            </div>
           </div>
         </div>
-        
-        {/* AI Toggle */}
+
         <div className="flex items-center gap-3">
           <div className={cn(
             "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors",
-            aiEnabled 
-              ? "bg-success/20 text-success" 
+            aiEnabled
+              ? "bg-success/20 text-success"
               : "bg-muted text-muted-foreground"
           )}>
             <Bot className="w-4 h-4" />
             <span>{aiEnabled ? "IA Ativada" : "IA Desativada"}</span>
           </div>
-          <Switch 
-            checked={aiEnabled} 
+          <Switch
+            checked={aiEnabled}
             onCheckedChange={onToggleAi}
             className="data-[state=checked]:bg-success"
           />
         </div>
       </div>
 
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-6 space-y-6"
-      >
-        {groupedMessages.map((group) => (
-          <div key={group.date} className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded bg-card border border-border">
-                {group.date}
-              </span>
-              <div className="flex-1 h-px bg-border" />
-            </div>
-            {group.items.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  "flex gap-3 max-w-[80%]",
-                  message.sender === "user" || message.sender === "ai" ? "ml-auto flex-row-reverse" : ""
+      <div className="flex-1 min-h-0">
+        <Virtuoso
+          data={messageMeta}
+          itemContent={(_, item) => {
+            const { message, showDate, dateLabel } = item
+            const isOutgoing = message.sender === "user" || message.sender === "ai"
+            const indicator =
+              message.messageType === "ai" || message.sender === "ai"
+                ? "IA"
+                : message.messageType === "manual" || message.sender === "user"
+                  ? "Humano"
+                  : null
+
+            return (
+              <div className="px-6 py-3 space-y-4">
+                {showDate && (
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded bg-card border border-border">
+                      {dateLabel}
+                    </span>
+                    <div className="flex-1 h-px bg-border" />
+                  </div>
                 )}
-              >
-                <Avatar className="w-8 h-8 flex-shrink-0">
-                  <AvatarFallback className={cn(
-                    "text-xs",
-                    message.sender === "contact" 
-                      ? "bg-accent text-accent-foreground" 
+
+                <div
+                  className={cn(
+                    "flex gap-3 max-w-[80%]",
+                    isOutgoing ? "ml-auto flex-row-reverse" : ""
+                  )}
+                >
+                  <Avatar className="w-8 h-8 flex-shrink-0">
+                    <AvatarFallback className={cn(
+                      "text-xs",
+                      message.sender === "contact"
+                        ? "bg-accent text-accent-foreground"
+                        : message.sender === "ai"
+                          ? "bg-success text-success-foreground"
+                          : "bg-primary text-primary-foreground"
+                    )}>
+                      {message.sender === "contact" ? initials : message.sender === "ai" ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className={cn(
+                    "rounded-2xl px-4 py-2.5",
+                    message.sender === "contact"
+                      ? "bg-card border border-border"
                       : message.sender === "ai"
-                        ? "bg-success text-success-foreground"
+                        ? "bg-success/20 border border-success/30"
                         : "bg-primary text-primary-foreground"
                   )}>
-                    {message.sender === "contact" ? initials : message.sender === "ai" ? <Bot className="w-4 h-4" /> : <User className="w-4 h-4" />}
-                  </AvatarFallback>
-                </Avatar>
-                <div className={cn(
-                  "rounded-2xl px-4 py-2.5",
-                  message.sender === "contact" 
-                    ? "bg-card border border-border" 
-                    : message.sender === "ai"
-                      ? "bg-success/20 border border-success/30"
-                      : "bg-primary text-primary-foreground"
-                )}>
-                  {renderMedia(message)}
-                  {message.content ? (
-                    <p className={cn(
-                      "text-sm break-words whitespace-pre-wrap",
-                      message.sender === "user" ? "text-primary-foreground" : "text-foreground"
-                    )}>
-                      {message.content}
-                    </p>
-                  ) : null}
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {message.messageType === "ai" && (
-                      <Bot className="w-3 h-3 text-success" />
-                    )}
-                    <span className={cn(
-                      "text-[10px]",
-                      message.sender === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
-                    )}>
-                      {formatTime(message.timestamp)}
-                    </span>
+                    {renderMedia(message)}
+                    {message.content ? (
+                      <p className={cn(
+                        "text-sm break-words whitespace-pre-wrap",
+                        message.sender === "user" ? "text-primary-foreground" : "text-foreground"
+                      )}>
+                        {message.content}
+                      </p>
+                    ) : null}
+                    <div className="flex items-center gap-1.5 mt-1">
+                      {indicator === "IA" && (
+                        <Bot className="w-3 h-3 text-success" />
+                      )}
+                      {indicator === "Humano" && (
+                        <User className="w-3 h-3 text-primary-foreground/70" />
+                      )}
+                      {indicator && (
+                        <span className={cn(
+                          "text-[10px]",
+                          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                        )}>
+                          {indicator}
+                        </span>
+                      )}
+                      <span className={cn(
+                        "text-[10px]",
+                        isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                      )}>
+                        {formatTime(message.timestamp)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        ))}
+            )
+          }}
+          followOutput="auto"
+        />
       </div>
 
-      {/* Input */}
+      {typing && (
+        <div className="px-6 pb-2 text-xs text-muted-foreground">Digitando...</div>
+      )}
+
       <div className="p-4 border-t border-border bg-card sticky bottom-0">
         <div className="flex items-center gap-3">
           <Input
@@ -240,7 +247,7 @@ export function ChatArea({
             onKeyDown={handleKeyDown}
             className="flex-1 bg-input border-border text-foreground placeholder:text-muted-foreground"
           />
-          <Button 
+          <Button
             onClick={handleSend}
             disabled={!inputValue.trim()}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
@@ -252,11 +259,10 @@ export function ChatArea({
         {aiEnabled && (
           <p className="text-xs text-success mt-2 flex items-center gap-1">
             <Bot className="w-3 h-3" />
-            A IA responderÃ¡ automaticamente as mensagens recebidas
+            A IA respondera automaticamente as mensagens recebidas
           </p>
         )}
       </div>
     </div>
   )
 }
-
