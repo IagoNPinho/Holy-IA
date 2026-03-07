@@ -541,6 +541,7 @@ async function initWhatsappClient() {
     latestQr = qr;
     connectionStatus = "not_authenticated";
     log("info", "whatsapp_qr_received");
+    sendEvent("qr", { qr });
     qrcode.generate(qr, { small: true });
   });
 
@@ -548,6 +549,7 @@ async function initWhatsappClient() {
     connectionStatus = "ready";
     log("info", "whatsapp_ready");
     console.info("[WHATSAPP] Client ready");
+    sendEvent("ready", { status: "ready" });
     syncInitialChats(client)
       .then(async (result) => {
         const { getConversationCount } = require("../database/db");
@@ -566,6 +568,7 @@ async function initWhatsappClient() {
   client.on("authenticated", () => {
     connectionStatus = "authenticated";
     log("info", "whatsapp_authenticated");
+    sendEvent("ready", { status: "authenticated" });
   });
 
   client.on("auth_failure", (msg) => {
@@ -577,6 +580,7 @@ async function initWhatsappClient() {
     connectionStatus = "disconnected";
     log("warn", "whatsapp_disconnected", { reason });
     console.warn("[WHATSAPP] Client disconnected", { reason });
+    sendEvent("disconnected", { status: "disconnected", reason });
   });
 
   client.on("message", handleIncomingMessage);
