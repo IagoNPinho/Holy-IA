@@ -33,9 +33,7 @@ build/
 *.db-*
 backend/database/*.sqlite
 backend/database/*.sqlite-*
-.wwebjs_auth/
 backend/.wwebjs_auth/
-.wwebjs_cache/
 backend/.wwebjs_cache/
 
 ########################################

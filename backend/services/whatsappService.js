@@ -13,6 +13,7 @@ const { getState, transitionState } = require("./conversationState");
 const { splitAiResponse } = require("./aiUtils");
 const { sendEvent } = require("./sseService");
 const { scheduleFollowups } = require("./followUpService");
+const { getAvailableSlots } = require("./scheduleService");
 
 let client = null;
 let latestQr = null;
@@ -370,9 +371,9 @@ async function handleIncomingMessage(message) {
         }
       }
     }
-  const timestamp = message.timestamp
-    ? new Date(message.timestamp * 1000).toISOString()
-    : new Date().toISOString();
+    const timestamp = message.timestamp
+      ? new Date(message.timestamp * 1000).toISOString()
+      : new Date().toISOString();
 
     const { intent } = detectIntent(message.body);
     const patientName = extractPatientName(message.body);
@@ -390,33 +391,33 @@ async function handleIncomingMessage(message) {
     const statePrompt = `Estado da conversa: ${prevState} -> ${nextState}.`;
     const extraSystemPrompt = `${intentPrompt}\n${statePrompt}`;
     const media = await saveIncomingMedia(message);
-  const mediaPreview = media
-    ? media.mediaType === "image"
-      ? "📷 Foto"
-      : media.mediaType === "video"
-        ? "🎥 Vídeo"
-        : media.mediaType === "audio" || media.mediaType === "ptt"
-          ? "🎧 Áudio"
-          : "📎 Documento"
-    : null;
-  const lastMessageText = message.body || mediaPreview || "";
+    const mediaPreview = media
+      ? media.mediaType === "image"
+        ? "📷 Foto"
+        : media.mediaType === "video"
+          ? "🎥 Vídeo"
+          : media.mediaType === "audio" || media.mediaType === "ptt"
+            ? "🎧 Áudio"
+            : "📎 Documento"
+      : null;
+    const lastMessageText = message.body || mediaPreview || "";
 
-  await saveMessage({
-    conversationId: conversation.id,
-    fromMe: false,
-    body: message.body,
-    timestamp,
-    messageType: "incoming",
-    intent,
-    mediaType: media?.mediaType || null,
-    mediaUrl: media?.mediaUrl || null,
-    mimeType: media?.mimeType || null,
-  });
-  await updateConversationIncoming({
-    id: conversation.id,
-    name: contactName,
-    lastMessage: lastMessageText,
-  });
+    await saveMessage({
+      conversationId: conversation.id,
+      fromMe: false,
+      body: message.body,
+      timestamp,
+      messageType: "incoming",
+      intent,
+      mediaType: media?.mediaType || null,
+      mediaUrl: media?.mediaUrl || null,
+      mimeType: media?.mimeType || null,
+    });
+    await updateConversationIncoming({
+      id: conversation.id,
+      name: contactName,
+      lastMessage: lastMessageText,
+    });
     sendEvent("message_received", {
       conversationId: conversation.id,
       contactId,
@@ -441,6 +442,14 @@ async function handleIncomingMessage(message) {
     await scheduleFollowups({ contactId, conversationId: conversation.id });
 
     const history = await buildHistory(conversation.id, 10);
+    let slotsPrompt = "";
+    if (intent === "appointment_request") {
+      const today = new Date().toISOString().slice(0, 10);
+      const slots = await getAvailableSlots(today);
+      if (slots.length) {
+        slotsPrompt = `Horários disponíveis hoje:\n${slots.join("\n")}\nPergunte qual prefere.`;
+      }
+    }
     const memory = await get(
       `
       SELECT patient_name, interests, last_procedure_discussed, last_intent, notes
@@ -461,7 +470,7 @@ async function handleIncomingMessage(message) {
     const reply = await generateAIResponse({
       message: message.body,
       history,
-      extraSystemPrompt: memoryPrompt ? `${extraSystemPrompt}\n${memoryPrompt}` : extraSystemPrompt,
+      extraSystemPrompt: [extraSystemPrompt, memoryPrompt, slotsPrompt].filter(Boolean).join("\n"),
       contactId,
     });
     const responses = splitAiResponse(reply, { ideal: 120, max: 220, maxMessages: 3 });
@@ -503,9 +512,21 @@ async function handleIncomingMessage(message) {
 
 async function initWhatsappClient() {
   client = new Client({
-    authStrategy: new LocalAuth({ clientId: env.WHATSAPP_CLIENT_ID }),
+    authStrategy: new LocalAuth({
+      clientId: env.WHATSAPP_CLIENT_ID,
+      dataPath: "/var/www/.wwebjs_auth",
+    }),
     puppeteer: {
       headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process"
+      ]
     },
   });
 

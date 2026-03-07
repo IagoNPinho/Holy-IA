@@ -1,4 +1,4 @@
-// Import clinic appointments from CSV into SQLite.
+﻿// Import clinic appointments from CSV into SQLite.
 const fs = require("fs");
 const path = require("path");
 const { get, run } = require("../database/db");
@@ -73,14 +73,55 @@ function normalizeHeader(text) {
 function mapHeader(header) {
   const key = normalizeHeader(header);
   if (["paciente", "patient", "nome", "name"].includes(key)) return "patient_name";
-  if (["contato", "contact", "telefone", "whatsapp", "contact_id"].includes(key)) return "contact_id";
+  if (
+    ["contato", "contact", "telefone", "whatsapp", "telefone whatsapp", "celular", "phone", "contact_id"].includes(
+      key
+    )
+  )
+    return "contact_id";
   if (["procedimentos", "procedimento", "procedure", "tratamento"].includes(key)) return "procedure";
   if (["data", "data do agendamento", "appointment date", "date"].includes(key)) return "appointment_date";
   if (["hora", "horario", "appointment time", "time"].includes(key)) return "appointment_time";
   if (["profissional", "professional", "especialista"].includes(key)) return "professional";
-  if (["status", "situacao", "situação"].includes(key)) return "status";
+  if (["status", "situacao", "situaÃ§Ã£o"].includes(key)) return "status";
   return null;
 }
+
+function normalizeDate(value) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const parts = trimmed.split(" ")[0].split("/");
+  if (parts.length !== 3) return trimmed;
+  const [day, month, year] = parts;
+  if (!day || !month || !year) return trimmed;
+  const dd = day.padStart(2, "0");
+  const mm = month.padStart(2, "0");
+  return `${year}-${mm}-${dd}`;
+}
+
+function normalizeTime(value) {
+  if (!value) return "";
+  const trimmed = value.trim().toLowerCase();
+  let raw = trimmed;
+  if (raw.includes(" ")) {
+    raw = raw.split(" ")[1] || raw.split(" ")[0];
+  }
+  raw = raw.replace("h", ":").replace(/[^0-9:]/g, "");
+  const parts = raw.split(":").filter(Boolean);
+  if (!parts.length) return "";
+  const hour = (parts[0] || "0").padStart(2, "0");
+  const minute = (parts[1] || "0").padStart(2, "0");
+  return `${hour}:${minute}`;
+}
+
+function normalizePhone(value) {
+  if (!value) return "";
+  const digits = value.toString().replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  return `55${digits}`;
+}
+
 
 async function importAppointments(filePath) {
   const absolutePath = path.resolve(filePath);
@@ -119,7 +160,13 @@ async function importAppointments(filePath) {
         record.appointment_time = parts[1];
       }
     }
-    if (!record.appointment_time) continue;
+    record.appointment_date = normalizeDate(record.appointment_date);
+    record.appointment_time = normalizeTime(record.appointment_time);
+    if (record.contact_id) {
+      record.contact_id = normalizePhone(record.contact_id);
+      if (!record.contact_id) record.contact_id = null;
+    }
+    if (!record.appointment_time || !record.appointment_date) continue;
 
     const existing = await get(
       `
@@ -163,3 +210,5 @@ importAppointments(csvPath).catch((error) => {
   console.error(error.message);
   process.exit(1);
 });
+
+

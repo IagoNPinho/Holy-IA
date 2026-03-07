@@ -265,6 +265,9 @@ async function migrate() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  await ensureColumns("appointments", {
+    contact_id: "TEXT",
+  });
   await run(`CREATE INDEX IF NOT EXISTS idx_appointments_date_time ON appointments(appointment_date, appointment_time)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_appointments_patient ON appointments(patient_name)`);
 }
