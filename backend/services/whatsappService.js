@@ -525,7 +525,6 @@ async function initWhatsappClient() {
     }),
     puppeteer: {
       headless: "new",
-      executablePath: "/usr/bin/chromium-browser",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
