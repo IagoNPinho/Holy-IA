@@ -1,7 +1,7 @@
 "use client"
 
 import { create } from "zustand"
-import { shallow } from "zustand/shallow"
+import { useShallow } from "zustand/react/shallow"
 
 export type ConversationStage = "NEW" | "WAITING" | "IN_PROGRESS" | "SCHEDULED" | "CLIENT"
 
@@ -41,6 +41,8 @@ type State = {
   selectConversation: (id: string) => void
   setTyping: (value: boolean) => void
 }
+
+const EMPTY_MESSAGES: Message[] = []
 
 function sortOrder(list: Conversation[]) {
   return [...list].sort((a, b) => {
@@ -100,10 +102,14 @@ export const useConversationStore = create<State>((set, get) => ({
 }))
 
 export const useConversationList = () =>
-  useConversationStore((state) => state.order.map((id) => state.conversations[id]), shallow)
+  useConversationStore(
+    useShallow((state: State) => state.order.map((id) => state.conversations[id]))
+  )
 
 export const useSelectedConversation = () =>
   useConversationStore((state) => (state.selectedId ? state.conversations[state.selectedId] : null))
 
 export const useMessagesForSelected = () =>
-  useConversationStore((state) => (state.selectedId ? state.messages[state.selectedId] || [] : []), shallow)
+  useConversationStore(
+    useShallow((state: State) => (state.selectedId ? state.messages[state.selectedId] || EMPTY_MESSAGES : EMPTY_MESSAGES))
+  )

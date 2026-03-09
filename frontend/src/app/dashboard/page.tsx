@@ -11,6 +11,7 @@ import { useWhatsAppConnection } from "@/hooks/use-whatsapp-connection"
 import { WhatsAppConnector } from "@/modules/whatsapp/components/whatsapp-connector"
 import { useEvents } from "@/hooks/use-events"
 import { useConversationList, useConversationStore, useSelectedConversation } from "@/store/conversation-store"
+import type { Message } from "@/store/conversation-store"
 
 type ConversationApi = {
   id: number
@@ -169,7 +170,7 @@ export default function DashboardPage() {
 
   const refreshMessages = useCallback(async (conversationId: string) => {
     const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=100`)
-    const mapped = res.data
+    const mapped: Message[] = res.data
       .slice()
       .reverse()
       .map((item) => ({

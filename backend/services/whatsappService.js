@@ -21,6 +21,13 @@ let connectionStatus = "disconnected";
 let messageSchema = null;
 let watchdogTimer = null;
 let restarting = false;
+let watchdogBlockUntil = 0;
+let transientErrorUntil = 0;
+let lastQrAt = null;
+let lastAuthAt = null;
+let lastReadyAt = null;
+let lastStateChangeAt = null;
+let lastDisconnectedAt = null;
 const processedMessageIds = new Map();
 const processedMessageKeys = new Map();
 
@@ -33,6 +40,14 @@ function log(level, message, meta = {}) {
   };
   // eslint-disable-next-line no-console
   console.log(JSON.stringify(payload));
+}
+
+function blockWatchdog(ms, reason) {
+  watchdogBlockUntil = Math.max(watchdogBlockUntil, Date.now() + ms);
+  log("info", "watchdog_blocked", {
+    reason,
+    until: new Date(watchdogBlockUntil).toISOString(),
+  });
 }
 
 async function ensureConversation(contactId, contactName) {
@@ -519,6 +534,7 @@ async function handleIncomingMessage(message) {
 }
 
 async function initWhatsappClient() {
+  blockWatchdog(90 * 1000, "init");
   client = new Client({
     authStrategy: new LocalAuth({
       clientId: env.WHATSAPP_CLIENT_ID,
@@ -541,14 +557,18 @@ async function initWhatsappClient() {
   client.on("qr", (qr) => {
     latestQr = qr;
     connectionStatus = "not_authenticated";
-    log("info", "whatsapp_qr_received");
+    lastQrAt = Date.now();
+    blockWatchdog(2 * 60 * 1000, "qr");
+    log("info", "whatsapp_qr_received", { status: connectionStatus });
     sendEvent("qr", { qr });
     qrcode.generate(qr, { small: true });
   });
 
   client.on("ready", () => {
     connectionStatus = "ready";
-    log("info", "whatsapp_ready");
+    lastReadyAt = Date.now();
+    blockWatchdog(2 * 60 * 1000, "ready");
+    log("info", "whatsapp_ready", { status: connectionStatus });
     console.info("[WHATSAPP] Client ready");
     sendEvent("ready", { status: "ready" });
     syncInitialChats(client)
@@ -568,20 +588,31 @@ async function initWhatsappClient() {
 
   client.on("authenticated", () => {
     connectionStatus = "authenticated";
-    log("info", "whatsapp_authenticated");
+    lastAuthAt = Date.now();
+    blockWatchdog(2 * 60 * 1000, "authenticated");
+    log("info", "whatsapp_authenticated", { status: connectionStatus });
     sendEvent("ready", { status: "authenticated" });
   });
 
   client.on("auth_failure", (msg) => {
     connectionStatus = "not_authenticated";
-    log("error", "whatsapp_auth_failure", { message: msg });
+    blockWatchdog(2 * 60 * 1000, "auth_failure");
+    log("error", "whatsapp_auth_failure", { message: msg, status: connectionStatus });
   });
 
   client.on("disconnected", (reason) => {
     connectionStatus = "disconnected";
-    log("warn", "whatsapp_disconnected", { reason });
+    lastDisconnectedAt = Date.now();
+    blockWatchdog(30 * 1000, "disconnected");
+    log("warn", "whatsapp_disconnected", { reason, status: connectionStatus });
     console.warn("[WHATSAPP] Client disconnected", { reason });
     sendEvent("disconnected", { status: "disconnected", reason });
+  });
+
+  client.on("change_state", (state) => {
+    lastStateChangeAt = Date.now();
+    blockWatchdog(60 * 1000, "change_state");
+    log("info", "whatsapp_change_state", { state });
   });
 
   client.on("message", handleIncomingMessage);
@@ -594,10 +625,27 @@ function startWatchdog() {
   if (watchdogTimer) return;
   watchdogTimer = setInterval(async () => {
     console.info("[WATCHDOG] Checking system health");
+    const now = Date.now();
     if (connectionStatus === "ready" || connectionStatus === "authenticated") {
       return;
     }
     if (restarting) return;
+    if (now < watchdogBlockUntil) {
+      log("info", "watchdog_hold", { until: new Date(watchdogBlockUntil).toISOString() });
+      return;
+    }
+    if (now < transientErrorUntil) {
+      log("warn", "watchdog_transient_hold", { until: new Date(transientErrorUntil).toISOString() });
+      return;
+    }
+    if (lastStateChangeAt && now - lastStateChangeAt < 60 * 1000) {
+      log("info", "watchdog_waiting_for_state_transition");
+      return;
+    }
+    if (connectionStatus === "not_authenticated" && latestQr && lastQrAt && now - lastQrAt < 5 * 60 * 1000) {
+      log("info", "watchdog_waiting_for_auth", { lastQrAt: new Date(lastQrAt).toISOString() });
+      return;
+    }
     restarting = true;
     try {
       console.warn("[WATCHDOG] WhatsApp disconnected, attempting restart");
@@ -610,7 +658,16 @@ function startWatchdog() {
       }
       await initWhatsappClient();
     } catch (error) {
-      log("error", "whatsapp_watchdog_failed", { error: error?.message });
+      const message = error?.message || "";
+      if (message.includes("Execution context was destroyed")) {
+        transientErrorUntil = now + 2 * 60 * 1000;
+        log("warn", "whatsapp_watchdog_transient_error", {
+          error: message,
+          hold_until: new Date(transientErrorUntil).toISOString(),
+        });
+      } else {
+        log("error", "whatsapp_watchdog_failed", { error: message });
+      }
     } finally {
       restarting = false;
     }
