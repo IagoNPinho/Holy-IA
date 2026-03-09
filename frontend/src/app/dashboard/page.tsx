@@ -42,6 +42,7 @@ export default function DashboardPage() {
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
   const selectedId = useConversationStore((state) => state.selectedId)
   const refreshTimerRef = useRef<number | null>(null)
+  const listLengthRef = useRef<number>(0)
 
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
   const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true)
@@ -49,6 +50,10 @@ export default function DashboardPage() {
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [mobileView, setMobileView] = useState<"list" | "chat">("list")
   const { qr, connected } = useWhatsAppConnection()
+
+  useEffect(() => {
+    listLengthRef.current = conversationList.length
+  }, [conversationList.length])
 
   useEffect(() => {
     let isActive = true
@@ -71,7 +76,8 @@ export default function DashboardPage() {
   }, [])
 
   const refreshConversations = useCallback(async (limitOverride?: number) => {
-    const limit = Math.max(limitOverride || 20, conversationList.length || 0)
+    const currentLength = listLengthRef.current || 0
+    const limit = Math.max(limitOverride || 20, currentLength)
     const res = await request<{ data: ConversationApi[] }>(
       `/conversations?limit=${limit}&offset=0`
     )
@@ -85,7 +91,7 @@ export default function DashboardPage() {
       resolvedAt: item.resolved_at || null,
     }))
     setConversations(mapped)
-  }, [conversationList.length, setConversations])
+  }, [setConversations])
 
   const loadInitialConversations = useCallback(async () => {
     setIsLoadingConversations(true)
