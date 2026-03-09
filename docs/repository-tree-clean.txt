@@ -1,0 +1,240 @@
+﻿├── node_modules
+│   └── (conteúdo omitido)
+├── frontend
+│   ├── styles
+│   │   ├── globals.css
+│   ├── src
+│   │   ├── utils
+│   │   │   ├── utils.ts
+│   │   ├── types
+│   │   ├── store
+│   │   │   ├── conversation-store.ts
+│   │   ├── services
+│   │   │   ├── api.ts
+│   │   ├── modules
+│   │   │   ├── whatsapp
+│   │   │   │   ├── types
+│   │   │   │   ├── services
+│   │   │   │   ├── hooks
+│   │   │   │   ├── components
+│   │   │   ├── metrics
+│   │   │   │   ├── types
+│   │   │   │   ├── services
+│   │   │   │   ├── hooks
+│   │   │   │   ├── components
+│   │   │   ├── followups
+│   │   │   │   ├── types
+│   │   │   │   ├── services
+│   │   │   │   ├── hooks
+│   │   │   │   ├── components
+│   │   │   ├── crm
+│   │   │   │   ├── types
+│   │   │   │   ├── services
+│   │   │   │   ├── hooks
+│   │   │   │   ├── components
+│   │   │   ├── conversations
+│   │   │   │   ├── types
+│   │   │   │   ├── services
+│   │   │   │   ├── hooks
+│   │   │   │   ├── components
+│   │   ├── hooks
+│   │   │   ├── use-whatsapp-connection.ts
+│   │   │   ├── use-toast.ts
+│   │   │   ├── use-mobile.ts
+│   │   │   ├── use-events.ts
+│   │   ├── components
+│   │   │   ├── ui
+│   │   │   │   ├── use-toast.ts
+│   │   │   │   ├── use-mobile.tsx
+│   │   │   │   ├── tooltip.tsx
+│   │   │   │   ├── toggle-group.tsx
+│   │   │   │   ├── toggle.tsx
+│   │   │   │   ├── toaster.tsx
+│   │   │   │   ├── toast.tsx
+│   │   │   │   ├── textarea.tsx
+│   │   │   │   ├── tabs.tsx
+│   │   │   │   ├── table.tsx
+│   │   │   │   ├── switch.tsx
+│   │   │   │   ├── spinner.tsx
+│   │   │   │   ├── sonner.tsx
+│   │   │   │   ├── slider.tsx
+│   │   │   │   ├── skeleton.tsx
+│   │   │   │   ├── sidebar.tsx
+│   │   │   │   ├── sheet.tsx
+│   │   │   │   ├── separator.tsx
+│   │   │   │   ├── select.tsx
+│   │   │   │   ├── scroll-area.tsx
+│   │   │   │   ├── resizable.tsx
+│   │   │   │   ├── radio-group.tsx
+│   │   │   │   ├── progress.tsx
+│   │   │   │   ├── popover.tsx
+│   │   │   │   ├── pagination.tsx
+│   │   │   │   ├── navigation-menu.tsx
+│   │   │   │   ├── menubar.tsx
+│   │   │   │   ├── label.tsx
+│   │   │   │   ├── kbd.tsx
+│   │   │   │   ├── item.tsx
+│   │   │   │   ├── input-otp.tsx
+│   │   │   │   ├── input-group.tsx
+│   │   │   │   ├── input.tsx
+│   │   │   │   ├── hover-card.tsx
+│   │   │   │   ├── form.tsx
+│   │   │   │   ├── field.tsx
+│   │   │   │   ├── empty.tsx
+│   │   │   │   ├── dropdown-menu.tsx
+│   │   │   │   ├── drawer.tsx
+│   │   │   │   ├── dialog.tsx
+│   │   │   │   ├── context-menu.tsx
+│   │   │   │   ├── command.tsx
+│   │   │   │   ├── collapsible.tsx
+│   │   │   │   ├── checkbox.tsx
+│   │   │   │   ├── chart.tsx
+│   │   │   │   ├── carousel.tsx
+│   │   │   │   ├── card.tsx
+│   │   │   │   ├── calendar.tsx
+│   │   │   │   ├── button-group.tsx
+│   │   │   │   ├── button.tsx
+│   │   │   │   ├── breadcrumb.tsx
+│   │   │   │   ├── badge.tsx
+│   │   │   │   ├── avatar.tsx
+│   │   │   │   ├── aspect-ratio.tsx
+│   │   │   │   ├── alert-dialog.tsx
+│   │   │   │   ├── alert.tsx
+│   │   │   │   ├── accordion.tsx
+│   │   │   ├── layout
+│   │   │   │   ├── topbar.tsx
+│   │   │   │   ├── theme-provider.tsx
+│   │   │   │   ├── event-provider.tsx
+│   │   │   │   ├── auth-guard.tsx
+│   │   │   │   ├── app-sidebar.tsx
+│   │   ├── app
+│   │   │   ├── login
+│   │   │   │   ├── page.tsx
+│   │   │   ├── dashboard
+│   │   │   │   ├── whatsapp
+│   │   │   │   ├── settings
+│   │   │   │   ├── overview
+│   │   │   │   ├── metrics
+│   │   │   │   ├── page.tsx
+│   │   │   │   ├── layout.tsx
+│   │   │   ├── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   ├── globals.css
+│   ├── node_modules
+│   │   └── (conteúdo omitido)
+│   ├── .next
+│   │   ├── dev
+│   │   │   ├── build
+│   │   │   ├── cache
+│   │   │   ├── logs
+│   │   │   ├── server
+│   │   │   ├── static
+│   │   │   ├── types
+│   │   │   ├── build-manifest.json
+│   │   │   ├── fallback-build-manifest.json
+│   │   │   ├── package.json
+│   │   │   ├── prerender-manifest.json
+│   │   │   ├── routes-manifest.json
+│   │   │   ├── trace
+│   ├── tsconfig.json
+│   ├── postcss.config.mjs
+│   ├── pnpm-lock.yaml
+│   ├── package.json
+│   ├── next-env.d.ts
+│   ├── next.config.mjs
+│   ├── components.json
+│   ├── .gitignore
+│   ├── .env.local
+├── docs
+│   ├── repository-tree-clean.txt
+│   ├── FAILURE_PATTERNS.md
+│   ├── codebase-map.md
+│   ├── architecture.md
+│   ├── AI_MEMORY.md
+│   ├── AI_CONTEXT.md
+├── backend
+│   ├── uploads
+│   ├── state
+│   │   ├── systemState.js
+│   ├── services
+│   │   ├── whatsappService.js
+│   │   ├── sseService.js
+│   │   ├── settingsService.js
+│   │   ├── scheduleService.js
+│   │   ├── promptRouter.js
+│   │   ├── modelRouter.js
+│   │   ├── intentService.js
+│   │   ├── intentRouter.js
+│   │   ├── followUpService.js
+│   │   ├── conversationState.js
+│   │   ├── clinicaExpertsService.js
+│   │   ├── aiUtils.js
+│   │   ├── aiService.js
+│   ├── scripts
+│   │   ├── importProcedures.js
+│   │   ├── importAppointments.js
+│   ├── routes
+│   │   ├── whatsapp.js
+│   │   ├── toggle.js
+│   │   ├── settings.js
+│   │   ├── metrics.js
+│   │   ├── health.js
+│   │   ├── followups.js
+│   │   ├── debug.js
+│   │   ├── conversations.js
+│   │   ├── auth.js
+│   │   ├── ai.js
+│   ├── node_modules
+│   │   └── (conteúdo omitido)
+│   ├── middleware
+│   │   ├── auth.js
+│   ├── database
+│   │   ├── whatsapp.sqlite
+│   │   ├── migrations.js
+│   │   ├── db.js
+│   ├── data
+│   ├── controllers
+│   │   ├── whatsappController.js
+│   │   ├── settingsController.js
+│   │   ├── metricsController.js
+│   │   ├── debugController.js
+│   │   ├── conversationController.js
+│   │   ├── authController.js
+│   │   ├── aiController.js
+│   ├── config
+│   │   ├── env.js
+│   ├── .wwebjs_cache
+│   │   └── (conteúdo omitido)
+│   ├── .wwebjs_auth
+│   │   └── (conteúdo omitido)
+│   ├── server.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── nodemon.json
+│   ├── ecosystem.config.js
+│   ├── .env
+├── .github
+│   ├── workflows
+│   │   ├── deploy.yml
+├── .continue
+│   ├── rules
+│   │   ├── recovery-layer.md
+│   │   ├── orchestrator-rules.md
+│   │   ├── language-rules.md
+│   │   ├── CONTINUE.MD
+│   │   ├── coding-standards.md
+│   │   ├── architecture-rules.md
+│   ├── prompts
+│   │   ├── engineering-prompts.md
+│   ├── config.yaml
+├── server_comand.md
+├── pnpm-lock.yaml
+├── package-lock.json
+├── package.json
+├── HOLY_AI_SYSTEM_OVERVIEW.md
+├── .gitignore
+├── .continueignore
+├── .aiderignore
+├── .aider.input.history
+├── .aider.conf.yml
+├── .aider.chat.history.md
