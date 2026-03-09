@@ -403,11 +403,12 @@ async function handleIncomingMessage(message) {
             : "📎 Documento"
       : null;
     const lastMessageText = message.body || mediaPreview || "";
+    const bodyToStore = message.body || mediaPreview || "[media]";
 
     await saveMessage({
       conversationId: conversation.id,
       fromMe: false,
-      body: message.body,
+      body: bodyToStore,
       timestamp,
       messageType: "incoming",
       intent,
@@ -426,6 +427,8 @@ async function handleIncomingMessage(message) {
     });
     sendEvent("conversation_updated", { conversationId: conversation.id });
 
+    await scheduleFollowups({ contactId, conversationId: conversation.id });
+
     const block = await get("SELECT contact_id FROM ai_blocklist WHERE contact_id = ?", [contactId]);
     if (block) {
       log("info", "ai_blocked_contact", { contactId });
@@ -440,8 +443,6 @@ async function handleIncomingMessage(message) {
       log("info", "ai_disabled_for_conversation", { contactId, conversationId: conversation?.id });
       return;
     }
-
-    await scheduleFollowups({ contactId, conversationId: conversation.id });
 
     const history = await buildHistory(conversation.id, 10);
     let slotsPrompt = "";

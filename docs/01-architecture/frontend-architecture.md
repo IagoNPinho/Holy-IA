@@ -231,7 +231,8 @@ Recommended behavior:
 
 - new message event → patch conversation + append message if open
 - conversation updated event → patch single conversation item
-- reconnect event → perform targeted sync, not full reset by default
+- reconnect event -> perform targeted sync, not full reset by default
+- SSE-triggered refreshes should be debounced, with a slow fallback resync (e.g., ~60s) to recover from missed events
 
 ---
 

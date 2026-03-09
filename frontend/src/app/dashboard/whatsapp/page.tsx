@@ -12,7 +12,7 @@ export default function WhatsAppPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">WhatsApp</h1>
           <p className="text-muted-foreground mt-1">
-            Gerencie a conexÃ£o e status do WhatsApp.
+            Gerencie a conexão e status do WhatsApp.
           </p>
         </div>
 

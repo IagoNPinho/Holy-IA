@@ -26,7 +26,11 @@ const stageColor = (stage?: string) => {
   }
 }
 
-export function ConversationList() {
+type ConversationListProps = {
+  isLoading?: boolean
+}
+
+export function ConversationList({ isLoading }: ConversationListProps) {
   const [query, setQuery] = useState("")
   const conversations = useConversationList()
   const selectedId = useConversationStore((state) => state.selectedId)
@@ -121,111 +125,117 @@ export function ConversationList() {
       </div>
 
       <div className="flex-1">
-        <Virtuoso
-          data={filtered}
-          itemContent={(_, conversation) => (
-            <button
-              key={conversation.id}
-              onClick={() => selectConversation(conversation.id)}
-              className={cn(
-                "w-full flex items-center gap-3 p-4 text-left transition-colors border-b border-border group",
-                selectedId === conversation.id
-                  ? "bg-secondary"
-                  : "hover:bg-secondary/50"
-              )}
-            >
-              <Avatar className="w-10 h-10 flex-shrink-0">
-                <AvatarFallback className="bg-accent text-accent-foreground text-sm">
-                  {conversation.contactName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className={cn(
-                    "font-medium truncate text-foreground",
-                    conversation.unread > 0 && "font-semibold"
-                  )}>
-                    {conversation.contactName}
-                  </span>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {(() => {
-                      const label = getAlertLabel(
-                        conversation.timestamp,
-                        conversation.unread,
-                        conversation.resolvedAt
-                      )
-                      return label ? (
-                        <span className={cn(
-                          "px-2 py-0.5 rounded-full text-[10px] font-semibold",
-                          alertColor(label)
-                        )}>
-                          {label}
-                        </span>
-                      ) : null
-                    })()}
-                    <span className="text-xs text-muted-foreground">
-                      {formatTimestamp(conversation.timestamp)}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <p className={cn(
-                    "text-sm truncate",
-                    conversation.unread > 0 ? "text-foreground" : "text-muted-foreground"
-                  )}>
-                    {conversation.lastMessage}
-                  </p>
-                  {conversation.aiEnabled && (
-                    <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-success/20 text-success">
-                      IA
-                    </span>
-                  )}
-                  {conversation.stage && (
-                    <span className={cn(
-                      "flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded",
-                      stageColor(conversation.stage)
-                    )}>
-                      {conversation.stage}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {conversation.unread > 0 && (
-                  <div className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold flex items-center justify-center flex-shrink-0">
-                    {Math.min(conversation.unread || 1, 99)}
-                  </div>
+        {filtered.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-sm text-muted-foreground px-4 text-center">
+            {isLoading ? "Carregando conversas..." : "Nenhuma conversa encontrada"}
+          </div>
+        ) : (
+          <Virtuoso
+            data={filtered}
+            itemContent={(_, conversation) => (
+              <button
+                key={conversation.id}
+                onClick={() => selectConversation(conversation.id)}
+                className={cn(
+                  "w-full flex items-center gap-3 p-4 text-left transition-colors border-b border-border group",
+                  selectedId === conversation.id
+                    ? "bg-secondary"
+                    : "hover:bg-secondary/50"
                 )}
-                <div className="hidden group-hover:flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={(event) => handleScheduleFollowup(conversation.id, event)}
-                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
-                    title="Agendar follow-up"
-                  >
-                    <Bell className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => handleSendReminder(conversation.id, event)}
-                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
-                    title="Enviar lembrete"
-                  >
-                    <Send className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => handleResolve(conversation.id, event)}
-                    className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
-                    title="Marcar como resolvida"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
+              >
+                <Avatar className="w-10 h-10 flex-shrink-0">
+                  <AvatarFallback className="bg-accent text-accent-foreground text-sm">
+                    {conversation.contactName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cn(
+                      "font-medium truncate text-foreground",
+                      conversation.unread > 0 && "font-semibold"
+                    )}>
+                      {conversation.contactName}
+                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {(() => {
+                        const label = getAlertLabel(
+                          conversation.timestamp,
+                          conversation.unread,
+                          conversation.resolvedAt
+                        )
+                        return label ? (
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-full text-[10px] font-semibold",
+                            alertColor(label)
+                          )}>
+                            {label}
+                          </span>
+                        ) : null
+                      })()}
+                      <span className="text-xs text-muted-foreground">
+                        {formatTimestamp(conversation.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <p className={cn(
+                      "text-sm truncate",
+                      conversation.unread > 0 ? "text-foreground" : "text-muted-foreground"
+                    )}>
+                      {conversation.lastMessage}
+                    </p>
+                    {conversation.aiEnabled && (
+                      <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-success/20 text-success">
+                        IA
+                      </span>
+                    )}
+                    {conversation.stage && (
+                      <span className={cn(
+                        "flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded",
+                        stageColor(conversation.stage)
+                      )}>
+                        {conversation.stage}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </button>
-          )}
-        />
+                <div className="flex items-center gap-2">
+                  {conversation.unread > 0 && (
+                    <div className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold flex items-center justify-center flex-shrink-0">
+                      {Math.min(conversation.unread || 1, 99)}
+                    </div>
+                  )}
+                  <div className="hidden group-hover:flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(event) => handleScheduleFollowup(conversation.id, event)}
+                      className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                      title="Agendar follow-up"
+                    >
+                      <Bell className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => handleSendReminder(conversation.id, event)}
+                      className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                      title="Enviar lembrete"
+                    >
+                      <Send className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => handleResolve(conversation.id, event)}
+                      className="h-7 w-7 rounded-full bg-muted hover:bg-muted/70 flex items-center justify-center"
+                      title="Marcar como resolvida"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                </div>
+              </button>
+            )}
+          />
+        )}
       </div>
     </div>
   )

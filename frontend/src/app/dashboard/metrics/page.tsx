@@ -34,7 +34,7 @@ export default function MetricsPage() {
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-6 space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">MÃ©tricas</h1>
+          <h1 className="text-2xl font-semibold text-foreground">Métricas</h1>
           <p className="text-muted-foreground mt-1">
             Acompanhe o volume de mensagens e atendimento.
           </p>
@@ -83,7 +83,7 @@ export default function MetricsPage() {
           </Card>
           <Card className="border-border bg-card">
             <CardHeader>
-              <CardTitle className="text-foreground text-sm">Tempo mÃƒÂ©dio resposta (s)</CardTitle>
+              <CardTitle className="text-foreground text-sm">Tempo médio resposta (s)</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-semibold text-foreground">
               {metrics?.avg_response_time_seconds ?? "--"}
@@ -99,7 +99,7 @@ export default function MetricsPage() {
           </Card>
           <Card className="border-border bg-card">
             <CardHeader>
-              <CardTitle className="text-foreground text-sm">MÃƒÂ­dias hoje</CardTitle>
+              <CardTitle className="text-foreground text-sm">Mídias hoje</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-semibold text-foreground">
               {metrics?.media_messages_today ?? "--"}

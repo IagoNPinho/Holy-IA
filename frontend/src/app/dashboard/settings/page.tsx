@@ -57,8 +57,8 @@ export default function SettingsPage() {
       })
       setSaved(true)
       toast({
-        title: "ConfiguraÃ§Ãµes salvas",
-        description: "As configuraÃ§Ãµes da IA foram atualizadas com sucesso.",
+        title: "Configurações salvas",
+        description: "As configurações da IA foram atualizadas com sucesso.",
       })
       setTimeout(() => setSaved(false), 3000)
     } catch (err) {
@@ -150,7 +150,7 @@ export default function SettingsPage() {
               <MessageSquare className="w-5 h-5 text-muted-foreground" />
               <CardTitle className="text-foreground">Bloqueios da IA</CardTitle>
             </div>
-            <CardDescription>Contatos que nÃ£o devem receber respostas automÃ¡ticas</CardDescription>
+            <CardDescription>Contatos que não devem receber respostas automáticas</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">

@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { cn } from "@/utils/utils"
 import { ConversationList } from "@/modules/conversations/components/conversation-list"
 import { ChatArea } from "@/modules/conversations/components/chat-area"
@@ -41,8 +41,10 @@ export default function DashboardPage() {
   const setMessages = useConversationStore((state) => state.setMessages)
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
   const selectedId = useConversationStore((state) => state.selectedId)
+  const refreshTimerRef = useRef<number | null>(null)
 
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
+  const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [mobileView, setMobileView] = useState<"list" | "chat">("list")
@@ -85,17 +87,37 @@ export default function DashboardPage() {
     setConversations(mapped)
   }, [conversationList.length, setConversations])
 
+  const loadInitialConversations = useCallback(async () => {
+    setIsLoadingConversations(true)
+    try {
+      await refreshConversations(20)
+      setConversationsError(null)
+    } catch (err) {
+      setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
+      console.error(err)
+    } finally {
+      setIsLoadingConversations(false)
+    }
+  }, [refreshConversations])
+
+  const scheduleConversationsRefresh = useCallback(() => {
+    if (refreshTimerRef.current) return
+    refreshTimerRef.current = window.setTimeout(async () => {
+      refreshTimerRef.current = null
+      try {
+        await refreshConversations()
+        setConversationsError(null)
+      } catch (err) {
+        console.error(err)
+      }
+    }, 500)
+  }, [refreshConversations])
+
   useEffect(() => {
     let isActive = true
     const loadConversations = async () => {
-      try {
-        await refreshConversations(20)
-        if (!isActive) return
-        setConversationsError(null)
-      } catch (err) {
-        setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
-        console.error(err)
-      }
+      if (!isActive) return
+      await loadInitialConversations()
     }
     loadConversations()
     const interval = setInterval(async () => {
@@ -104,12 +126,15 @@ export default function DashboardPage() {
       } catch (err) {
         console.error(err)
       }
-    }, 8000)
+    }, 60000)
     return () => {
       isActive = false
       clearInterval(interval)
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current)
+      }
     }
-  }, [refreshConversations])
+  }, [loadInitialConversations, refreshConversations])
 
   const handleLoadMore = async () => {
     if (isLoadingMore) return
@@ -145,14 +170,14 @@ export default function DashboardPage() {
         id: String(item.id),
         conversationId,
         content: item.body,
-        sender:
-          item.message_type === "ai"
-            ? "ai"
-            : item.message_type === "manual"
-              ? "user"
-              : "contact",
+        sender: (() => {
+          if (item.message_type === "ai") return "ai"
+          if (item.message_type === "manual") return "user"
+          if (item.message_type === "incoming") return "contact"
+          return item.from_me ? "user" : "contact"
+        })(),
         timestamp: item.timestamp,
-        messageType: item.message_type || null,
+        messageType: item.message_type || (item.from_me ? "manual" : "incoming"),
         mediaType: item.media_type || null,
         mediaUrl: item.media_url || null,
         mimeType: item.mime_type || null,
@@ -172,27 +197,36 @@ export default function DashboardPage() {
       }
     }
     loadMessages()
-    const interval = setInterval(loadMessages, 5000)
     return () => {
       isActive = false
-      clearInterval(interval)
     }
   }, [selectedId, refreshMessages])
 
-  const handleUpdate = useCallback(async () => {
-    try {
-      await refreshConversations()
-      if (selectedId) {
-        await refreshMessages(selectedId)
+  const handleMessageEvent = useCallback(
+    async (payload?: { conversationId?: number | string }) => {
+      scheduleConversationsRefresh()
+      const targetId = payload?.conversationId ? String(payload.conversationId) : null
+      if (targetId && targetId === selectedId) {
+        await refreshMessages(targetId)
       }
-    } catch (err) {
-      console.error(err)
-    }
-  }, [refreshConversations, refreshMessages, selectedId])
+    },
+    [refreshMessages, scheduleConversationsRefresh, selectedId]
+  )
 
-  useEvents("message_received", handleUpdate)
-  useEvents("message_sent", handleUpdate)
-  useEvents("conversation_updated", handleUpdate)
+  const handleConversationEvent = useCallback(
+    async (payload?: { conversationId?: number | string }) => {
+      scheduleConversationsRefresh()
+      const targetId = payload?.conversationId ? String(payload.conversationId) : null
+      if (targetId && targetId === selectedId) {
+        await refreshMessages(targetId)
+      }
+    },
+    [refreshMessages, scheduleConversationsRefresh, selectedId]
+  )
+
+  useEvents("message_received", handleMessageEvent)
+  useEvents("message_sent", handleMessageEvent)
+  useEvents("conversation_updated", handleConversationEvent)
 
   useEffect(() => {
     if (selectedId) setMobileView("chat")
@@ -246,7 +280,9 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="flex-1">
-            <ConversationList />
+            <ConversationList
+              isLoading={isLoadingConversations}
+            />
           </div>
           <div className="p-3 border-t border-border bg-card">
             <Button

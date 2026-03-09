@@ -6,7 +6,12 @@ const jwt = require("jsonwebtoken");
 
 const { env } = require("./config/env");
 const { migrate } = require("./database/migrations");
-const { initWhatsappClient, getWhatsappClient } = require("./services/whatsappService");
+const {
+  initWhatsappClient,
+  getWhatsappClient,
+  getStatus: getWhatsappStatus,
+  getLatestQr,
+} = require("./services/whatsappService");
 const { addClient } = require("./services/sseService");
 const { loadPendingFollowups } = require("./services/followUpService");
 const { conversationsRouter } = require("./routes/conversations");
@@ -81,6 +86,16 @@ app.get("/events", sseAuthRequired, (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  const status = getWhatsappStatus();
+  if (status === "ready" || status === "authenticated") {
+    res.write(`event: ready\ndata: ${JSON.stringify({ status })}\n\n`);
+  } else {
+    res.write(`event: disconnected\ndata: ${JSON.stringify({ status })}\n\n`);
+  }
+  const latestQr = getLatestQr();
+  if (latestQr) {
+    res.write(`event: qr\ndata: ${JSON.stringify({ qr: latestQr })}\n\n`);
+  }
   addClient(res);
 });
 

@@ -82,6 +82,7 @@ async function listMessages(req, res, next) {
       `,
       [conversationId]
     );
+    sendEvent("conversation_updated", { conversationId });
     res.json({ data: messages });
   } catch (error) {
     next(error);
