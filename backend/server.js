@@ -40,16 +40,24 @@ function log(level, message, meta = {}) {
   console.log(JSON.stringify(payload));
 }
 
-const allowedOrigins = [env.FRONTEND_ORIGIN || "https://holy-ai.vercel.app", "http://localhost:3000"];
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("CORS blocked"));
-    },
-  })
-);
+const allowedOrigins = [
+  env.FRONTEND_ORIGIN || "https://holy-ai.vercel.app",
+  "https://holy-ai.vercel.app",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://192.168.1.5:3000",
+];
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("CORS blocked"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
