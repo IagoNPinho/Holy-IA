@@ -309,6 +309,10 @@ async function updateConversationIncoming({ id, name, lastMessage }) {
 }
 
 async function saveAiLog({ conversationId, prompt, response }) {
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    log("warn", "ai_log_skipped_empty_prompt", { conversationId });
+    return;
+  }
   await run(
     `
     INSERT INTO ai_logs (conversation_id, prompt, response)
@@ -441,6 +445,21 @@ async function handleIncomingMessage(message) {
       contactId,
     });
     sendEvent("conversation_updated", { conversationId: conversation.id });
+
+    const nowMs = Date.now();
+    const messageTsMs = message.timestamp ? message.timestamp * 1000 : nowMs;
+    const isNewMsg = message.isNewMsg !== false;
+    const isRecent = nowMs - messageTsMs < 2 * 60 * 1000;
+    const shouldAutomate = isNewMsg && isRecent;
+    if (!shouldAutomate) {
+      log("info", "skip_automation_for_history", {
+        contactId,
+        conversationId: conversation.id,
+        isNewMsg,
+        messageTs: message.timestamp || null,
+      });
+      return;
+    }
 
     await scheduleFollowups({ contactId, conversationId: conversation.id });
 

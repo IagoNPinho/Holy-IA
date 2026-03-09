@@ -14,7 +14,7 @@ export function useWhatsAppConnection(): ConnectionState {
   const [connected, setConnected] = useState(false)
   const [hasBootstrapped, setHasBootstrapped] = useState(false)
   const handleQr = (payload: { qr?: string }) => {
-    if (payload?.qr) {
+    if (payload?.qr && !connected) {
       setQr(payload.qr)
       setConnected(false)
     }
@@ -25,18 +25,20 @@ export function useWhatsAppConnection(): ConnectionState {
     setQr(null)
   }
 
-  const bootstrapStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (includeQr: boolean) => {
     try {
       const status = await request<{ status: string }>("/whatsapp/status")
       if (status?.status === "ready" || status?.status === "authenticated") {
         setConnected(true)
         setQr(null)
-      } else {
-        setConnected(false)
+        return
       }
+      setConnected(false)
     } catch (error) {
       console.error(error)
     }
+
+    if (!includeQr) return
 
     try {
       const result = await request<{ qr?: string }>("/whatsapp/qr")
@@ -45,22 +47,33 @@ export function useWhatsAppConnection(): ConnectionState {
       }
     } catch {
       // ignore missing QR
-    } finally {
-      setHasBootstrapped(true)
     }
   }, [])
 
   useEvents("qr", handleQr)
   useEvents("ready", handleReady)
-  useEvents("disconnected", () => setConnected(false))
+  useEvents("disconnected", () => {
+    setConnected(false)
+    setQr(null)
+  })
 
   useEffect(() => {
     // keep stable initial state on mount
     setConnected(false)
     if (!hasBootstrapped) {
-      bootstrapStatus()
+      refreshStatus(true).finally(() => setHasBootstrapped(true))
     }
-  }, [bootstrapStatus, hasBootstrapped])
+  }, [hasBootstrapped, refreshStatus])
+
+  useEffect(() => {
+    if (connected) return
+    const interval = window.setInterval(() => {
+      refreshStatus(true)
+    }, 12000)
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [connected, refreshStatus])
 
   return { qr, connected }
 }
