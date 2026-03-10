@@ -186,6 +186,20 @@ function extractProcedure(text) {
   return null;
 }
 
+function getMessageTimestampIso(message) {
+  if (message?.timestamp) {
+    return new Date(message.timestamp * 1000).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function getMediaPreviewLabel(mediaType) {
+  if (mediaType === "image") return "ðŸ“· Foto";
+  if (mediaType === "video") return "ðŸŽ¥ VÃ­deo";
+  if (mediaType === "audio" || mediaType === "ptt") return "ðŸŽ§ Ãudio";
+  return "ðŸ“Ž Documento";
+}
+
 async function loadMessageSchema() {
   if (messageSchema) return messageSchema;
   const rows = await all(`PRAGMA table_info(messages)`);
@@ -307,30 +321,32 @@ async function buildHistory(conversationId, limit = 10) {
     .filter((row) => row.content && (row.role === "user" || row.role === "assistant"));
 }
 
-async function updateConversation({ id, name, lastMessage }) {
+async function updateConversation({ id, name, lastMessage, updatedAt }) {
+  const finalUpdatedAt = updatedAt || new Date().toISOString();
   await run(
     `
     UPDATE conversations
     SET name = COALESCE(?, name),
         last_message = ?,
-        updated_at = datetime('now')
+        updated_at = ?
     WHERE id = ?
     `,
-    [name || null, lastMessage || null, id]
+    [name || null, lastMessage || null, finalUpdatedAt, id]
   );
 }
 
-async function updateConversationIncoming({ id, name, lastMessage }) {
+async function updateConversationIncoming({ id, name, lastMessage, updatedAt }) {
+  const finalUpdatedAt = updatedAt || new Date().toISOString();
   await run(
     `
     UPDATE conversations
     SET name = COALESCE(?, name),
         last_message = ?,
-        updated_at = datetime('now'),
+        updated_at = ?,
         unread_count = COALESCE(unread_count, 0) + 1
     WHERE id = ?
     `,
-    [name || null, lastMessage || null, id]
+    [name || null, lastMessage || null, finalUpdatedAt, id]
   );
 }
 
@@ -428,9 +444,7 @@ async function handleIncomingMessage(message) {
         }
       }
     }
-    const timestamp = message.timestamp
-      ? new Date(message.timestamp * 1000).toISOString()
-      : new Date().toISOString();
+    const timestamp = getMessageTimestampIso(message);
 
     const { intent } = detectIntent(message.body);
     const patientName = extractPatientName(message.body);
@@ -448,15 +462,7 @@ async function handleIncomingMessage(message) {
     const statePrompt = `Estado da conversa: ${prevState} -> ${nextState}.`;
     const extraSystemPrompt = `${intentPrompt}\n${statePrompt}`;
     const media = await saveIncomingMedia(message);
-    const mediaPreview = media
-      ? media.mediaType === "image"
-        ? "📷 Foto"
-        : media.mediaType === "video"
-          ? "🎥 Vídeo"
-          : media.mediaType === "audio" || media.mediaType === "ptt"
-            ? "🎧 Áudio"
-            : "📎 Documento"
-      : null;
+    const mediaPreview = media ? getMediaPreviewLabel(media.mediaType) : null;
     const lastMessageText = message.body || mediaPreview || "";
     const bodyToStore = message.body || mediaPreview || "[media]";
 
@@ -475,6 +481,7 @@ async function handleIncomingMessage(message) {
       id: conversation.id,
       name: contactName,
       lastMessage: lastMessageText,
+      updatedAt: timestamp,
     });
     sendEvent("message_received", {
       conversationId: conversation.id,
@@ -558,18 +565,20 @@ async function handleIncomingMessage(message) {
 
     for (let i = 0; i < messagesToSend.length; i += 1) {
       const body = messagesToSend[i];
+      const outTimestamp = new Date().toISOString();
       await client.sendMessage(contactId, body);
       await saveMessage({
         conversationId: conversation.id,
         fromMe: true,
         body,
-        timestamp: new Date().toISOString(),
+        timestamp: outTimestamp,
         messageType: "ai",
       });
       await updateConversation({
         id: conversation.id,
         name: contactName,
         lastMessage: body,
+        updatedAt: outTimestamp,
       });
       sendEvent("message_sent", { conversationId: conversation.id });
       sendEvent("conversation_updated", { conversationId: conversation.id });
@@ -585,6 +594,89 @@ async function handleIncomingMessage(message) {
     });
   } catch (error) {
     log("error", "message_handling_failed", { error: error?.message });
+  }
+}
+
+function resolveOutgoingContactId(message) {
+  return message?.to || message?.id?.remote || null;
+}
+
+async function handleOutgoingMessage(message) {
+  try {
+    if (!message?.fromMe) return;
+    const rawContactId = resolveOutgoingContactId(message);
+    if (!rawContactId) return;
+    if (
+      rawContactId === "status@broadcast" ||
+      rawContactId?.includes("@newsletter") ||
+      rawContactId?.includes("@g.us")
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const messageId = message?.id?.id || message?.id?._serialized;
+    const fallbackKey = `${rawContactId}:${message?.body || ""}:${message?.timestamp || ""}:out`;
+    const dedupeKey = messageId ? `out:id:${messageId}` : `out:fallback:${fallbackKey}`;
+    const last = processedMessageIds.get(dedupeKey) || processedMessageKeys.get(dedupeKey);
+    if (last && now - last < 5 * 60 * 1000) {
+      log("info", "duplicate_outgoing_skipped", { messageId, contactId: rawContactId, dedupeKey });
+      return;
+    }
+    if (messageId) {
+      processedMessageIds.set(dedupeKey, now);
+    } else {
+      processedMessageKeys.set(dedupeKey, now);
+    }
+
+    const contact = await message.getContact().catch(() => null);
+    const contactName = contact?.pushname || contact?.name || rawContactId;
+    const conversation = await ensureConversation(rawContactId, contactName);
+    await ensureContact(rawContactId);
+
+    const timestamp = getMessageTimestampIso(message);
+    const mediaType = message?.hasMedia ? message?.type || "media" : null;
+    const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
+    const bodyToStore = message.body || mediaPreview || "[media]";
+
+    const existing = await get(
+      `
+      SELECT id
+      FROM messages
+      WHERE conversation_id = ?
+        AND COALESCE(from_me, 0) = 1
+        AND body = ?
+        AND ABS(strftime('%s', COALESCE(timestamp, created_at)) - strftime('%s', ?)) < 30
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [conversation.id, bodyToStore, timestamp]
+    );
+    if (existing?.id) {
+      log("info", "outgoing_message_already_persisted", { conversationId: conversation.id });
+      return;
+    }
+
+    await saveMessage({
+      conversationId: conversation.id,
+      fromMe: true,
+      body: bodyToStore,
+      timestamp,
+      messageType: "manual",
+      mediaType,
+      mediaUrl: null,
+      mimeType: null,
+    });
+    await updateConversation({
+      id: conversation.id,
+      name: contactName,
+      lastMessage: bodyToStore,
+      updatedAt: timestamp,
+    });
+    sendEvent("message_sent", { conversationId: conversation.id });
+    sendEvent("conversation_updated", { conversationId: conversation.id });
+  } catch (error) {
+    log("error", "outgoing_message_handling_failed", { error: error?.message });
   }
 }
 
@@ -671,6 +763,7 @@ async function initWhatsappClient() {
   });
 
   client.on("message", handleIncomingMessage);
+  client.on("message_create", handleOutgoingMessage);
 
   await client.initialize();
   startWatchdog();
@@ -770,17 +863,19 @@ async function sendManualMessage({ to, body }) {
   const convo = await ensureConversation(to, to);
   await ensureContact(to);
   await client.sendMessage(to, body);
+  const outTimestamp = new Date().toISOString();
   await saveMessage({
     conversationId: convo.id,
     fromMe: true,
     body,
-    timestamp: new Date().toISOString(),
+    timestamp: outTimestamp,
     messageType: "manual",
   });
   await updateConversation({
     id: convo.id,
     name: convo.name || to,
     lastMessage: body,
+    updatedAt: outTimestamp,
   });
   sendEvent("message_sent", { conversationId: convo.id });
   sendEvent("conversation_updated", { conversationId: convo.id });
@@ -870,3 +965,4 @@ module.exports = {
   scheduleSend,
   syncInitialChats,
 };
+

@@ -125,13 +125,14 @@ async function toggleConversationAi(req, res, next) {
     const { conversationId } = req.params;
     const { enabled } = req.body || {};
     const value = enabled ? 1 : 0;
+    const updatedAt = new Date().toISOString();
     await run(
       `
       UPDATE conversations
-      SET ai_enabled = ?, updated_at = datetime('now')
+      SET ai_enabled = ?, updated_at = ?
       WHERE id = ?
       `,
-      [value, conversationId]
+      [value, updatedAt, conversationId]
     );
     sendEvent("conversation_updated", { conversationId });
     return res.json({ ok: true, aiEnabled: Boolean(value) });
@@ -143,13 +144,14 @@ async function toggleConversationAi(req, res, next) {
 async function resolveConversation(req, res, next) {
   try {
     const { conversationId } = req.params;
+    const resolvedAt = new Date().toISOString();
     await run(
       `
       UPDATE conversations
-      SET resolved_at = datetime('now'), unread_count = 0, updated_at = datetime('now')
+      SET resolved_at = ?, unread_count = 0, updated_at = ?
       WHERE id = ?
       `,
-      [conversationId]
+      [resolvedAt, resolvedAt, conversationId]
     );
     sendEvent("conversation_updated", { conversationId });
     return res.json({ ok: true });
