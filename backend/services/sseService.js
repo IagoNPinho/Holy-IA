@@ -10,9 +10,16 @@ function addClient(res) {
 function sendEvent(type, payload) {
   const data = JSON.stringify(payload || {});
   const message = `event: ${type}\ndata: ${data}\n\n`;
+  let sent = 0;
   for (const client of clients) {
-    client.write(message);
+    try {
+      client.write(message);
+      sent += 1;
+    } catch {
+      // ignore write errors to keep SSE loop alive
+    }
   }
+  return { sent, clients: clients.size };
 }
 
 module.exports = {

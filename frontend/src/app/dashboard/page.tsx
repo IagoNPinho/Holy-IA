@@ -218,47 +218,72 @@ export default function DashboardPage() {
   }, [selectedId, refreshMessages])
 
   const handleMessageEvent = useCallback(
-    async (payload?: {
-      conversationId?: number | string
-      message?: Message
-      conversation?: {
-        id: string
-        contactName: string
-        lastMessage: string
-        timestamp: string
-        unread: number
-        aiEnabled: boolean
-        resolvedAt?: string | null
-      }
-    }) => {
-      const targetId = payload?.conversationId ? String(payload.conversationId) : null
-      if (payload?.message) {
-        addMessage(payload.message)
+    async (payload?: any) => {
+      const targetId = payload?.conversation?.id || payload?.conversationId
+      const message = payload?.message
+      if (message) {
+        addMessage({
+          id: String(message.id),
+          conversationId: String(message.conversationId || targetId),
+          content: message.content || "",
+          sender: message.sender || (message.messageType === "ai" ? "ai" : message.from_me ? "user" : "contact"),
+          timestamp: message.timestamp || "",
+          messageType: message.messageType || (message.sender === "ai" ? "ai" : "incoming"),
+          mediaType: message.mediaType || null,
+          mediaUrl: message.mediaUrl || null,
+          mimeType: message.mimeType || null,
+        })
       }
       if (payload?.conversation) {
         const nextConversation = targetId === selectedId
           ? { ...payload.conversation, unread: 0 }
           : payload.conversation
-        upsertConversation(nextConversation)
+        upsertConversation({
+          id: String(nextConversation.id),
+          contactName: nextConversation.contactName || "Contato sem nome",
+          lastMessage: nextConversation.lastMessage || "",
+          timestamp: nextConversation.timestamp || "",
+          unread: nextConversation.unread || 0,
+          aiEnabled: nextConversation.aiEnabled ?? true,
+          resolvedAt: nextConversation.resolvedAt || null,
+        })
       } else if (targetId) {
         scheduleConversationsRefresh()
       }
-      if (targetId && targetId === selectedId && !payload?.message) {
-        await refreshMessages(targetId)
+      if (targetId && String(targetId) === selectedId && !message) {
+        await refreshMessages(String(targetId))
       }
     },
     [addMessage, refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
   )
 
   const handleConversationEvent = useCallback(
-    async (payload?: { conversationId?: number | string }) => {
-      scheduleConversationsRefresh()
-      const targetId = payload?.conversationId ? String(payload.conversationId) : null
-      if (targetId && targetId === selectedId) {
-        await refreshMessages(targetId)
+    async (payload?: any) => {
+      const targetId = payload?.conversation?.id || payload?.conversationId
+      if (payload?.conversation) {
+        upsertConversation({
+          id: String(payload.conversation.id),
+          contactName: payload.conversation.contactName || "Contato sem nome",
+          lastMessage: payload.conversation.lastMessage || "",
+          timestamp: payload.conversation.timestamp || "",
+          unread: payload.conversation.unread || 0,
+          aiEnabled: payload.conversation.aiEnabled ?? true,
+          resolvedAt: payload.conversation.resolvedAt || null,
+        })
+      } else if (payload?.lastMessage || payload?.updatedAt) {
+        upsertConversation({
+          id: String(targetId),
+          lastMessage: payload.lastMessage || "",
+          timestamp: payload.updatedAt || "",
+        } as any)
+      } else {
+        scheduleConversationsRefresh()
+      }
+      if (targetId && String(targetId) === selectedId && !payload?.conversation) {
+        await refreshMessages(String(targetId))
       }
     },
-    [refreshMessages, scheduleConversationsRefresh, selectedId]
+    [refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
   )
 
   useEvents("message_received", handleMessageEvent)

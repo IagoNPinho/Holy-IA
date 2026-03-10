@@ -28,6 +28,7 @@ let lastAuthAt = null;
 let lastReadyAt = null;
 let lastStateChangeAt = null;
 let lastDisconnectedAt = null;
+const pendingOutbound = new Map();
 const processedMessageIds = new Map();
 const processedMessageKeys = new Map();
 
@@ -48,6 +49,29 @@ function blockWatchdog(ms, reason) {
     reason,
     until: new Date(watchdogBlockUntil).toISOString(),
   });
+}
+
+function getBodyPreview(body) {
+  return (body || "").slice(0, 20);
+}
+
+function emitSse(type, payload, logName) {
+  const result = sendEvent(type, payload);
+  const messageId = payload?.message?.id || null;
+  const contactId = payload?.contactId || null;
+  const bodyPreview = getBodyPreview(
+    payload?.message?.body || payload?.message?.content || payload?.lastMessage || ""
+  );
+  log("info", logName, {
+    event: type,
+    conversationId: payload?.conversationId || null,
+    messageId,
+    contactId,
+    bodyPreview,
+    emitted: (result?.sent || 0) > 0,
+    clients: result?.clients || 0,
+  });
+  return result;
 }
 
 async function ensureConversation(contactId, contactName) {
@@ -480,6 +504,12 @@ async function handleIncomingMessage(message) {
       mediaUrl: media?.mediaUrl || null,
       mimeType: media?.mimeType || null,
     });
+    log("info", "inbound_message_persisted", {
+      conversationId: conversation.id,
+      messageId: savedId || null,
+      contactId,
+      bodyPreview: getBodyPreview(bodyToStore),
+    });
     await updateConversationIncoming({
       id: conversation.id,
       name: contactName,
@@ -487,33 +517,47 @@ async function handleIncomingMessage(message) {
       updatedAt: timestamp,
     });
     const snapshot = await getConversationSnapshot(conversation.id);
-    sendEvent("message_received", {
-      conversationId: conversation.id,
-      contactId: conversation?.contact_id || normalizedContactId || rawContactId,
-      message: {
-        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
-        conversationId: String(conversation.id),
-        content: bodyToStore || "",
-        sender: "contact",
-        timestamp,
-        messageType: "incoming",
-        mediaType: media?.mediaType || null,
-        mediaUrl: media?.mediaUrl || null,
-        mimeType: media?.mimeType || null,
+    emitSse(
+      "message_received",
+      {
+        conversationId: conversation.id,
+        contactId,
+        message: {
+          id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+          conversationId: String(conversation.id),
+          content: bodyToStore || "",
+          sender: "contact",
+          timestamp,
+          messageType: "incoming",
+          mediaType: media?.mediaType || null,
+          mediaUrl: media?.mediaUrl || null,
+          mimeType: media?.mimeType || null,
+        },
+        conversation: snapshot
+          ? {
+              id: String(snapshot.id),
+              contactName: toDisplayName(snapshot),
+              lastMessage: snapshot.last_message || lastMessageText,
+              timestamp: snapshot.updated_at || timestamp,
+              unread: snapshot.unread_count || 0,
+              aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+              resolvedAt: snapshot.resolved_at || null,
+            }
+          : undefined,
       },
-      conversation: snapshot
-        ? {
-            id: String(snapshot.id),
-            contactName: toDisplayName(snapshot),
-            lastMessage: snapshot.last_message || lastMessageText,
-            timestamp: snapshot.updated_at || timestamp,
-            unread: snapshot.unread_count || 0,
-            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
-            resolvedAt: snapshot.resolved_at || null,
-          }
-        : undefined,
-    });
-    sendEvent("conversation_updated", { conversationId: conversation.id });
+      "sse_emit_message_received"
+    );
+    emitSse(
+      "conversation_updated",
+      {
+        conversationId: conversation.id,
+        contactId,
+        lastMessage: snapshot?.last_message || lastMessageText,
+        updatedAt: snapshot?.updated_at || timestamp,
+        unreadDelta: 1,
+      },
+      "sse_emit_conversation_updated"
+    );
 
     const nowMs = Date.now();
     const messageTsMs = message.timestamp ? message.timestamp * 1000 : nowMs;
@@ -601,6 +645,12 @@ async function handleIncomingMessage(message) {
         timestamp: outTimestamp,
         messageType: "ai",
       });
+      log("info", "outbound_ai_message_persisted", {
+        conversationId: conversation.id,
+        messageId: savedId || null,
+        contactId,
+        bodyPreview: getBodyPreview(body),
+      });
       await updateConversation({
         id: conversation.id,
         name: contactName,
@@ -608,32 +658,46 @@ async function handleIncomingMessage(message) {
         updatedAt: outTimestamp,
       });
       const snapshot = await getConversationSnapshot(conversation.id);
-      sendEvent("message_sent", {
+    emitSse(
+      "message_sent",
+      {
         conversationId: conversation.id,
+        contactId,
         message: {
           id: String(savedId || sentMessage?.id?._serialized || `${conversation.id}:${outTimestamp}`),
-          conversationId: String(conversation.id),
-          content: body,
-          sender: "ai",
-          timestamp: outTimestamp,
-          messageType: "ai",
-          mediaType: null,
-          mediaUrl: null,
-          mimeType: null,
+            conversationId: String(conversation.id),
+            content: body,
+            sender: "ai",
+            timestamp: outTimestamp,
+            messageType: "ai",
+            mediaType: null,
+            mediaUrl: null,
+            mimeType: null,
+          },
+          conversation: snapshot
+            ? {
+                id: String(snapshot.id),
+                contactName: toDisplayName(snapshot),
+                lastMessage: snapshot.last_message || body,
+                timestamp: snapshot.updated_at || outTimestamp,
+                unread: snapshot.unread_count || 0,
+                aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+                resolvedAt: snapshot.resolved_at || null,
+              }
+            : undefined,
         },
-        conversation: snapshot
-          ? {
-              id: String(snapshot.id),
-              contactName: toDisplayName(snapshot),
-              lastMessage: snapshot.last_message || body,
-              timestamp: snapshot.updated_at || outTimestamp,
-              unread: snapshot.unread_count || 0,
-              aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
-              resolvedAt: snapshot.resolved_at || null,
-            }
-          : undefined,
-      });
-      sendEvent("conversation_updated", { conversationId: conversation.id });
+        "sse_emit_message_sent"
+      );
+    emitSse(
+      "conversation_updated",
+      {
+        conversationId: conversation.id,
+        contactId,
+        lastMessage: snapshot?.last_message || body,
+        updatedAt: snapshot?.updated_at || outTimestamp,
+        },
+        "sse_emit_conversation_updated"
+      );
       if (i < messagesToSend.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, env.HUMAN_SPLIT_DELAY_MS));
       }
@@ -709,6 +773,16 @@ async function handleOutgoingMessage(message) {
     }
 
     const normalizedContactId = normalizeContactId(rawContactId);
+    const pendingKey = `${normalizedContactId || rawContactId}:${message?.body || ""}:out`;
+    const pending = pendingOutbound.get(pendingKey);
+    if (pending && now - pending.ts < 30 * 1000) {
+      pendingOutbound.delete(pendingKey);
+      log("info", "outgoing_message_pending_skip", {
+        contactId: normalizedContactId || rawContactId,
+        messageId: messageId || null,
+      });
+      return;
+    }
     const chat = await message.getChat().catch(() => null);
     const contactName = chat?.name || chat?.id?.user || normalizedContactId || rawContactId;
     const existingConversation = await findConversationByContactId(rawContactId, normalizedContactId);
@@ -748,6 +822,12 @@ async function handleOutgoingMessage(message) {
       mediaUrl: null,
       mimeType: null,
     });
+    log("info", "outbound_linked_message_persisted", {
+      conversationId: conversation.id,
+      messageId: savedId || null,
+      contactId: normalizedContactId || rawContactId,
+      bodyPreview: getBodyPreview(bodyToStore),
+    });
     await updateConversation({
       id: conversation.id,
       name: contactName,
@@ -755,32 +835,46 @@ async function handleOutgoingMessage(message) {
       updatedAt: timestamp,
     });
     const snapshot = await getConversationSnapshot(conversation.id);
-    sendEvent("message_sent", {
-      conversationId: conversation.id,
-      message: {
-        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
-        conversationId: String(conversation.id),
-        content: bodyToStore,
-        sender: "user",
-        timestamp,
-        messageType: "manual",
-        mediaType,
-        mediaUrl: null,
-        mimeType: null,
+    emitSse(
+      "message_sent",
+      {
+        conversationId: conversation.id,
+        contactId: normalizedContactId || rawContactId,
+        message: {
+          id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+          conversationId: String(conversation.id),
+          content: bodyToStore,
+          sender: "user",
+          timestamp,
+          messageType: "manual",
+          mediaType,
+          mediaUrl: null,
+          mimeType: null,
+        },
+        conversation: snapshot
+          ? {
+              id: String(snapshot.id),
+              contactName: toDisplayName(snapshot),
+              lastMessage: snapshot.last_message || bodyToStore,
+              timestamp: snapshot.updated_at || timestamp,
+              unread: snapshot.unread_count || 0,
+              aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+              resolvedAt: snapshot.resolved_at || null,
+            }
+          : undefined,
       },
-      conversation: snapshot
-        ? {
-            id: String(snapshot.id),
-            contactName: toDisplayName(snapshot),
-            lastMessage: snapshot.last_message || bodyToStore,
-            timestamp: snapshot.updated_at || timestamp,
-            unread: snapshot.unread_count || 0,
-            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
-            resolvedAt: snapshot.resolved_at || null,
-          }
-        : undefined,
-    });
-    sendEvent("conversation_updated", { conversationId: conversation.id });
+      "sse_emit_message_sent"
+    );
+    emitSse(
+      "conversation_updated",
+      {
+        conversationId: conversation.id,
+        contactId: normalizedContactId || rawContactId,
+        lastMessage: snapshot?.last_message || bodyToStore,
+        updatedAt: snapshot?.updated_at || timestamp,
+      },
+      "sse_emit_conversation_updated"
+    );
   } catch (error) {
     log("error", "outgoing_message_handling_failed", { error: error?.message });
   }
@@ -970,8 +1064,12 @@ async function sendManualMessage({ to, body }) {
   const existing = await findConversationByContactId(to, normalizedTo);
   const convo = existing || (await ensureConversation(normalizedTo || to, to));
   await ensureContact(convo?.contact_id || normalizedTo || to);
-  const sentMessage = await client.sendMessage(convo?.contact_id || normalizedTo || to, body);
+  const targetId = convo?.contact_id || normalizedTo || to;
+  const sentMessage = await client.sendMessage(targetId, body);
   registerOutgoingMessageId(sentMessage);
+  const pendingKey = `${targetId}:${body}:out`;
+  pendingOutbound.set(pendingKey, { ts: Date.now(), messageId: sentMessage?.id?._serialized || null });
+  setTimeout(() => pendingOutbound.delete(pendingKey), 30000);
   const outTimestamp = getMessageTimestampIso(sentMessage);
   const savedId = await saveMessage({
     conversationId: convo.id,
@@ -980,6 +1078,12 @@ async function sendManualMessage({ to, body }) {
     timestamp: outTimestamp,
     messageType: "manual",
   });
+  log("info", "outbound_panel_message_persisted", {
+    conversationId: convo.id,
+    messageId: savedId || null,
+    contactId: targetId,
+    bodyPreview: getBodyPreview(body),
+  });
   await updateConversation({
     id: convo.id,
     name: convo.name || to,
@@ -987,32 +1091,46 @@ async function sendManualMessage({ to, body }) {
     updatedAt: outTimestamp,
   });
   const snapshot = await getConversationSnapshot(convo.id);
-  sendEvent("message_sent", {
-    conversationId: convo.id,
-    message: {
-      id: String(savedId || sentMessage?.id?._serialized || `${convo.id}:${outTimestamp}`),
-      conversationId: String(convo.id),
-      content: body,
-      sender: "user",
-      timestamp: outTimestamp,
-      messageType: "manual",
-      mediaType: null,
-      mediaUrl: null,
-      mimeType: null,
+  emitSse(
+    "message_sent",
+    {
+      conversationId: convo.id,
+      contactId: targetId,
+      message: {
+        id: String(savedId || sentMessage?.id?._serialized || `${convo.id}:${outTimestamp}`),
+        conversationId: String(convo.id),
+        content: body,
+        sender: "user",
+        timestamp: outTimestamp,
+        messageType: "manual",
+        mediaType: null,
+        mediaUrl: null,
+        mimeType: null,
+      },
+      conversation: snapshot
+        ? {
+            id: String(snapshot.id),
+            contactName: toDisplayName(snapshot),
+            lastMessage: snapshot.last_message || body,
+            timestamp: snapshot.updated_at || outTimestamp,
+            unread: snapshot.unread_count || 0,
+            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+            resolvedAt: snapshot.resolved_at || null,
+          }
+        : undefined,
     },
-    conversation: snapshot
-      ? {
-          id: String(snapshot.id),
-          contactName: toDisplayName(snapshot),
-          lastMessage: snapshot.last_message || body,
-          timestamp: snapshot.updated_at || outTimestamp,
-          unread: snapshot.unread_count || 0,
-          aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
-          resolvedAt: snapshot.resolved_at || null,
-        }
-      : undefined,
-  });
-  sendEvent("conversation_updated", { conversationId: convo.id });
+    "sse_emit_message_sent"
+  );
+  emitSse(
+    "conversation_updated",
+    {
+      conversationId: convo.id,
+      contactId: targetId,
+      lastMessage: snapshot?.last_message || body,
+      updatedAt: snapshot?.updated_at || outTimestamp,
+    },
+    "sse_emit_conversation_updated"
+  );
 }
 
 // Mass sending logic with basic safety controls (no spam behavior).
@@ -1099,4 +1217,3 @@ module.exports = {
   scheduleSend,
   syncInitialChats,
 };
-
