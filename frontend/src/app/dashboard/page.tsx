@@ -176,7 +176,8 @@ export default function DashboardPage() {
     }
   }
 
-  const refreshMessages = useCallback(async (conversationId: string) => {
+  const refreshMessages = useCallback(async (conversationId: string, reason: string) => {
+    console.debug("[CHAT_FETCH] refreshMessages called", { conversationId, reason })
     const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=100`)
     const mapped: Message[] = res.data
       .slice()
@@ -205,7 +206,8 @@ export default function DashboardPage() {
     const loadMessages = async () => {
       if (!selectedId) return
       try {
-        await refreshMessages(selectedId)
+        console.debug("[CHAT_FETCH] selectedId changed", { conversationId: selectedId })
+        await refreshMessages(selectedId, "selectedId_change")
         if (!isActive) return
       } catch (err) {
         console.error(err)
@@ -261,8 +263,11 @@ export default function DashboardPage() {
       } else if (targetId) {
         scheduleConversationsRefresh()
       }
-      if (targetId && String(targetId) === selectedId && !message) {
-        await refreshMessages(String(targetId))
+      if (targetId && String(targetId) === selectedId && !message && !payload?.conversation) {
+        console.debug("[CHAT_FETCH] skip refreshMessages from SSE", {
+          reason: "message_event_no_payload",
+          conversationId: String(targetId),
+        })
       }
     },
     [addMessage, refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
@@ -296,7 +301,10 @@ export default function DashboardPage() {
         scheduleConversationsRefresh()
       }
       if (targetId && String(targetId) === selectedId && !payload?.conversation && !payload?.lastMessage && !payload?.updatedAt) {
-        await refreshMessages(String(targetId))
+        console.debug("[CHAT_FETCH] skip refreshMessages from SSE", {
+          reason: "conversation_event_no_payload",
+          conversationId: String(targetId),
+        })
       }
     },
     [refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
@@ -337,7 +345,7 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({ conversationId: selectedConversation.id, body: content }),
       })
-      await refreshMessages(selectedConversation.id)
+      console.debug("[CHAT_FETCH] skip refreshMessages after send", { conversationId: selectedConversation.id })
     } catch (err) {
       console.error(err)
     }
