@@ -711,8 +711,8 @@ async function handleOutgoingMessage(message) {
     const normalizedContactId = normalizeContactId(rawContactId);
     const chat = await message.getChat().catch(() => null);
     const contactName = chat?.name || chat?.id?.user || normalizedContactId || rawContactId;
-    const existing = await findConversationByContactId(rawContactId, normalizedContactId);
-    const conversation = existing || (await ensureConversation(normalizedContactId || rawContactId, contactName));
+    const existingConversation = await findConversationByContactId(rawContactId, normalizedContactId);
+    const conversation = existingConversation || (await ensureConversation(normalizedContactId || rawContactId, contactName));
     await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
 
     const timestamp = getMessageTimestampIso(message);
@@ -720,7 +720,7 @@ async function handleOutgoingMessage(message) {
     const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
     const bodyToStore = message.body || mediaPreview || "[media]";
 
-    const existing = await get(
+    const existingMessage = await get(
       `
       SELECT id
       FROM messages
@@ -733,7 +733,7 @@ async function handleOutgoingMessage(message) {
       `,
       [conversation.id, bodyToStore, timestamp]
     );
-    if (existing?.id) {
+    if (existingMessage?.id) {
       log("info", "outgoing_message_already_persisted", { conversationId: conversation.id });
       return;
     }
