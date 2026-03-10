@@ -10,7 +10,7 @@ import { request } from "@/services/api"
 import { useWhatsAppConnection } from "@/hooks/use-whatsapp-connection"
 import { WhatsAppConnector } from "@/modules/whatsapp/components/whatsapp-connector"
 import { useEvents } from "@/hooks/use-events"
-import { useConversationList, useConversationStore, useSelectedConversation } from "@/store/conversation-store"
+import { useConversationList, useConversationStore, useSelectedConversation, useMessageMetaForSelected } from "@/store/conversation-store"
 import type { Message } from "@/store/conversation-store"
 
 type ConversationApi = {
@@ -43,13 +43,13 @@ export default function DashboardPage() {
   const setConversations = useConversationStore((state) => state.setConversations)
   const setMessages = useConversationStore((state) => state.setMessages)
   const addMessages = useConversationStore((state) => state.addMessages)
+  const setMessageMeta = useConversationStore((state) => state.setMessageMeta)
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
   const addMessage = useConversationStore((state) => state.addMessage)
   const selectedId = useConversationStore((state) => state.selectedId)
   const refreshTimerRef = useRef<number | null>(null)
   const listLengthRef = useRef<number>(0)
-  const messagesCursorRef = useRef<Record<string, string | null>>({})
-  const messagesHasMoreRef = useRef<Record<string, boolean>>({})
+  const selectedMeta = useMessageMetaForSelected()
 
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
   const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true)
@@ -185,7 +185,10 @@ export default function DashboardPage() {
 
   const refreshMessages = useCallback(async (conversationId: string, reason: string) => {
     console.debug("[CHAT_FETCH] refreshMessages called", { conversationId, reason })
-    const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=${messagesLimit}`)
+    const res = await request<{
+      data: MessageApi[]
+      meta?: { hasMoreDb?: boolean; backfillAvailable?: boolean; backfillExhausted?: boolean; oldestCursor?: string | null }
+    }>(`/messages/${conversationId}?limit=${messagesLimit}`)
     const mapped: Message[] = res.data
       .slice()
       .reverse()
@@ -208,18 +211,29 @@ export default function DashboardPage() {
         whatsappMessageId: item.whatsapp_message_id || null,
       }))
     setMessages(conversationId, mapped)
-    messagesCursorRef.current[conversationId] = mapped.length ? mapped[0].timestamp : null
-    messagesHasMoreRef.current[conversationId] = res.data.length >= messagesLimit
-  }, [setMessages])
+    const meta = {
+      oldestCursor: res.meta?.oldestCursor ?? (mapped.length ? mapped[0].timestamp : null),
+      hasMoreDb: res.meta?.hasMoreDb ?? res.data.length >= messagesLimit,
+      backfillAvailable: res.meta?.backfillAvailable ?? false,
+      backfillExhausted: res.meta?.backfillExhausted ?? false,
+    }
+    setMessageMeta(conversationId, meta)
+    console.debug("[HISTORY] response meta", { conversationId, ...meta })
+  }, [messagesLimit, setMessageMeta, setMessages])
 
   const loadOlderMessages = useCallback(async (conversationId: string) => {
-    const cursor = messagesCursorRef.current[conversationId]
-    if (!cursor) return
+    const cursor = selectedMeta?.oldestCursor || null
+    const status = selectedMeta
+    if (!cursor && !(status?.backfillAvailable && !status?.backfillExhausted)) return
     if (isLoadingOlder) return
     setIsLoadingOlder(true)
     try {
-      const res = await request<{ data: MessageApi[] }>(
-        `/messages/${conversationId}?limit=${messagesLimit}&before=${encodeURIComponent(cursor)}`
+      console.debug("[HISTORY] load older clicked", { conversationId, cursor })
+      const res = await request<{
+        data: MessageApi[]
+        meta?: { hasMoreDb?: boolean; backfillAvailable?: boolean; backfillExhausted?: boolean; oldestCursor?: string | null }
+      }>(
+        `/messages/${conversationId}?limit=${messagesLimit}&before=${encodeURIComponent(cursor || "")}`
       )
       const mapped: Message[] = res.data
         .slice()
@@ -243,14 +257,23 @@ export default function DashboardPage() {
           whatsappMessageId: item.whatsapp_message_id || null,
         }))
       addMessages(conversationId, mapped, { prepend: true })
-      messagesCursorRef.current[conversationId] = mapped.length ? mapped[0].timestamp : cursor
-      messagesHasMoreRef.current[conversationId] = res.data.length >= messagesLimit
+      const meta = {
+        oldestCursor: res.meta?.oldestCursor ?? (mapped.length ? mapped[0].timestamp : cursor),
+        hasMoreDb: res.meta?.hasMoreDb ?? res.data.length >= messagesLimit,
+        backfillAvailable: res.meta?.backfillAvailable ?? status?.backfillAvailable ?? false,
+        backfillExhausted: res.meta?.backfillExhausted ?? status?.backfillExhausted ?? false,
+      }
+      setMessageMeta(conversationId, meta)
+      const canLoadOlder =
+        meta.hasMoreDb || (meta.backfillAvailable && !meta.backfillExhausted)
+      console.debug("[HISTORY] response meta", { conversationId, ...meta })
+      console.debug("[HISTORY] canLoadOlder recalculated", { conversationId, canLoadOlder })
     } catch (err) {
       console.error(err)
     } finally {
       setIsLoadingOlder(false)
     }
-  }, [addMessages, isLoadingOlder, messagesLimit])
+  }, [addMessages, isLoadingOlder, messagesLimit, selectedMeta, setMessageMeta])
 
   useEffect(() => {
     let isActive = true
@@ -465,7 +488,11 @@ export default function DashboardPage() {
             onSendMessage={handleSendMessage}
             onBack={handleBackToList}
             onLoadOlder={() => selectedConversation && loadOlderMessages(selectedConversation.id)}
-            canLoadOlder={Boolean(selectedConversation && messagesHasMoreRef.current[selectedConversation.id])}
+            canLoadOlder={Boolean(
+              selectedConversation &&
+              (selectedMeta?.hasMoreDb ||
+                (selectedMeta?.backfillAvailable && !selectedMeta?.backfillExhausted))
+            )}
             isLoadingOlder={isLoadingOlder}
           />
         ) : (

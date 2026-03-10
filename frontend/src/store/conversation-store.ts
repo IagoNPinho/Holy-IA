@@ -30,10 +30,18 @@ export type Message = {
   whatsappMessageId?: string | null
 }
 
+export type MessageMeta = {
+  oldestCursor: string | null
+  hasMoreDb: boolean
+  backfillAvailable: boolean
+  backfillExhausted: boolean
+}
+
 type State = {
   conversations: Record<string, Conversation>
   order: string[]
   messages: Record<string, Message[]>
+  messageMeta: Record<string, MessageMeta>
   selectedId: string | null
   typing: boolean
   setConversations: (list: Conversation[]) => void
@@ -41,6 +49,7 @@ type State = {
   setMessages: (conversationId: string, list: Message[]) => void
   addMessage: (message: Message) => void
   addMessages: (conversationId: string, list: Message[], opts?: { prepend?: boolean }) => void
+  setMessageMeta: (conversationId: string, meta: MessageMeta) => void
   selectConversation: (id: string) => void
   setTyping: (value: boolean) => void
 }
@@ -59,6 +68,7 @@ export const useConversationStore = create<State>((set, get) => ({
   conversations: {},
   order: [],
   messages: {},
+  messageMeta: {},
   selectedId: null,
   typing: false,
   setConversations: (list) =>
@@ -107,6 +117,10 @@ export const useConversationStore = create<State>((set, get) => ({
       }
       return { messages: { ...state.messages, [conversationId]: deduped } }
     }),
+  setMessageMeta: (conversationId, meta) =>
+    set((state) => ({
+      messageMeta: { ...state.messageMeta, [conversationId]: meta },
+    })),
   selectConversation: (id) =>
     set((state) => {
       const convo = state.conversations[id]
@@ -133,4 +147,9 @@ export const useSelectedConversation = () =>
 export const useMessagesForSelected = () =>
   useConversationStore(
     useShallow((state: State) => (state.selectedId ? state.messages[state.selectedId] || EMPTY_MESSAGES : EMPTY_MESSAGES))
+  )
+
+export const useMessageMetaForSelected = () =>
+  useConversationStore(
+    (state) => (state.selectedId ? state.messageMeta[state.selectedId] || null : null)
   )

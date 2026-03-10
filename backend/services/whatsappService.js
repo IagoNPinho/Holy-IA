@@ -772,6 +772,130 @@ function toDisplayName(snapshot) {
   return raw.replace(/@c\.us$/i, "").replace(/@g\.us$/i, "") || snapshot?.contact_id || "";
 }
 
+async function backfillConversationHistory({ conversationId, contactId, beforeTimestamp, limit }) {
+  const available =
+    Boolean(client) && (connectionStatus === "ready" || connectionStatus === "authenticated");
+  if (!available) {
+    log("info", "history_remote_backfill_exhausted", {
+      conversationId,
+      reason: "whatsapp_unavailable",
+    });
+    return { messages: [], exhausted: false, available: false };
+  }
+
+  log("info", "history_remote_backfill_attempt", {
+    conversationId,
+    contactId,
+    before: beforeTimestamp || null,
+    limit,
+  });
+
+  const normalizedId = normalizeContactId(contactId);
+  const targetId = normalizedId || contactId;
+  const chat = await client.getChatById(targetId).catch(() => null);
+  if (!chat) {
+    log("info", "history_remote_backfill_exhausted", {
+      conversationId,
+      reason: "chat_not_found",
+    });
+    return { messages: [], exhausted: false, available: false };
+  }
+
+  const beforeMs = beforeTimestamp ? new Date(beforeTimestamp).getTime() : null;
+  const fetched = await chat.fetchMessages({ limit: Math.max(limit, 50) });
+  const filtered = fetched.filter((msg) => {
+    if (!beforeMs) return true;
+    const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
+    return ts < beforeMs;
+  });
+
+  if (!filtered.length) {
+    log("info", "history_remote_backfill_exhausted", {
+      conversationId,
+      reason: "no_older_messages",
+    });
+    return { messages: [], exhausted: true, available: true };
+  }
+
+  const persisted = [];
+  for (const msg of filtered) {
+    const whatsappId = msg?.id?._serialized || msg?.id?.id || null;
+    if (whatsappId) {
+      const existing = await get(
+        "SELECT id FROM messages WHERE whatsapp_message_id = ? LIMIT 1",
+        [whatsappId]
+      );
+      if (existing?.id) continue;
+    }
+
+    const ts = getMessageTimestampIso(msg);
+    let mediaType = null;
+    let mediaUrl = null;
+    let mimeType = null;
+    let mediaFilename = null;
+    if (msg?.hasMedia) {
+      const media = await msg.downloadMedia().catch(() => null);
+      if (media?.data) {
+        const uploadsDir = path.join(__dirname, "..", "uploads");
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const extFromMime = media.mimetype ? media.mimetype.split("/")[1] : "";
+        const extFromName = media.filename ? path.extname(media.filename).replace(".", "") : "";
+        const ext = extFromName || extFromMime || "bin";
+        const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const filePath = path.join(uploadsDir, filename);
+        const buffer = Buffer.from(media.data, "base64");
+        fs.writeFileSync(filePath, buffer);
+        mediaType = msg.type || "media";
+        mimeType = media.mimetype || null;
+        mediaUrl = `/uploads/${filename}`;
+        mediaFilename = media.filename || null;
+      }
+    }
+
+    const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
+    const savedId = await saveMessage({
+      conversationId,
+      fromMe: Boolean(msg.fromMe),
+      body: bodyToStore,
+      timestamp: ts,
+      messageType: msg.fromMe ? "manual" : "incoming",
+      mediaType,
+      mediaUrl,
+      mimeType,
+      whatsappMessageId: whatsappId,
+      mediaFilename,
+    });
+
+    persisted.push({
+      id: savedId || null,
+      from_me: msg.fromMe ? 1 : 0,
+      body: bodyToStore,
+      timestamp: ts,
+      message_type: msg.fromMe ? "manual" : "incoming",
+      media_type: mediaType,
+      media_url: mediaUrl,
+      mime_type: mimeType,
+      media_filename: mediaFilename,
+      whatsapp_message_id: whatsappId,
+    });
+  }
+
+  log("info", "history_remote_backfill_persisted", {
+    conversationId,
+    count: persisted.length,
+  });
+
+  return {
+    messages: persisted.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    ),
+    exhausted: persisted.length === 0,
+    available: true,
+  };
+}
+
 async function handleOutgoingMessage(message) {
   try {
     if (!message?.fromMe) return;
@@ -1267,6 +1391,7 @@ module.exports = {
   getStatus,
   disconnect,
   sendManualMessage,
+  backfillConversationHistory,
   sendBulk,
   scheduleSend,
   syncInitialChats,

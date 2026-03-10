@@ -1,6 +1,6 @@
 // Conversation and message read endpoints.
-const { all, run } = require("../database/db");
-const { sendManualMessage } = require("../services/whatsappService");
+const { all, run, get } = require("../database/db");
+const { sendManualMessage, backfillConversationHistory } = require("../services/whatsappService");
 const { sendEvent } = require("../services/sseService");
 
 async function listConversations(req, res, next) {
@@ -56,9 +56,10 @@ async function listConversations(req, res, next) {
 async function listMessages(req, res, next) {
   try {
     const { conversationId } = req.params;
-    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 500);
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 200);
     const before = req.query.before;
-    const messages = await all(
+    const fetchLimit = limit + 1;
+    const dbMessages = await all(
       `
       SELECT
         id,
@@ -78,8 +79,37 @@ async function listMessages(req, res, next) {
       ORDER BY COALESCE(timestamp, created_at) DESC
       LIMIT ?
       `,
-      before ? [conversationId, before, limit] : [conversationId, limit]
+      before ? [conversationId, before, fetchLimit] : [conversationId, fetchLimit]
     );
+    console.info("history_db_fetch", {
+      conversationId,
+      returnedCount: dbMessages.length,
+      limit,
+      before: before || null,
+    });
+    const hasMoreDb = dbMessages.length > limit;
+    let rows = dbMessages.slice(0, limit);
+    let backfillAvailable = false;
+    let backfillExhausted = false;
+    let backfillAttempted = false;
+
+    if (before && rows.length === 0) {
+      backfillAttempted = true;
+      const convo = await get("SELECT contact_id FROM conversations WHERE id = ? LIMIT 1", [
+        conversationId,
+      ]);
+      const backfill = await backfillConversationHistory({
+        conversationId: Number(conversationId),
+        contactId: convo?.contact_id,
+        beforeTimestamp: before,
+        limit,
+      });
+      rows = backfill.messages;
+      backfillAvailable = backfill.available;
+      backfillExhausted = backfill.exhausted;
+    } else if (before && !hasMoreDb) {
+      backfillAvailable = true;
+    }
     await run(
       `
       UPDATE conversations
@@ -89,7 +119,24 @@ async function listMessages(req, res, next) {
       [conversationId]
     );
     sendEvent("conversation_updated", { conversationId });
-    res.json({ data: messages });
+    const oldestCursor = rows.length ? rows[rows.length - 1].timestamp : null;
+    console.info("message_history_response", {
+      conversationId,
+      returnedCount: rows.length,
+      hasMoreDb,
+      backfillAvailable,
+      backfillExhausted: backfillAttempted ? backfillExhausted : false,
+      oldestCursor,
+    });
+    res.json({
+      data: rows,
+      meta: {
+        hasMoreDb,
+        backfillAvailable,
+        backfillExhausted: backfillAttempted ? backfillExhausted : false,
+        oldestCursor,
+      },
+    });
   } catch (error) {
     next(error);
   }
