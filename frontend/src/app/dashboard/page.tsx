@@ -41,6 +41,7 @@ export default function DashboardPage() {
   const setConversations = useConversationStore((state) => state.setConversations)
   const setMessages = useConversationStore((state) => state.setMessages)
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
+  const addMessage = useConversationStore((state) => state.addMessage)
   const selectedId = useConversationStore((state) => state.selectedId)
   const refreshTimerRef = useRef<number | null>(null)
   const listLengthRef = useRef<number>(0)
@@ -217,14 +218,36 @@ export default function DashboardPage() {
   }, [selectedId, refreshMessages])
 
   const handleMessageEvent = useCallback(
-    async (payload?: { conversationId?: number | string }) => {
-      scheduleConversationsRefresh()
+    async (payload?: {
+      conversationId?: number | string
+      message?: Message
+      conversation?: {
+        id: string
+        contactName: string
+        lastMessage: string
+        timestamp: string
+        unread: number
+        aiEnabled: boolean
+        resolvedAt?: string | null
+      }
+    }) => {
       const targetId = payload?.conversationId ? String(payload.conversationId) : null
-      if (targetId && targetId === selectedId) {
+      if (payload?.message) {
+        addMessage(payload.message)
+      }
+      if (payload?.conversation) {
+        const nextConversation = targetId === selectedId
+          ? { ...payload.conversation, unread: 0 }
+          : payload.conversation
+        upsertConversation(nextConversation)
+      } else if (targetId) {
+        scheduleConversationsRefresh()
+      }
+      if (targetId && targetId === selectedId && !payload?.message) {
         await refreshMessages(targetId)
       }
     },
-    [refreshMessages, scheduleConversationsRefresh, selectedId]
+    [addMessage, refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
   )
 
   const handleConversationEvent = useCallback(

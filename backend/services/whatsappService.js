@@ -220,7 +220,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
   const direction = fromMe ? "out" : "in";
   const finalType = messageType || (fromMe ? "manual" : "incoming");
   if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
-    await run(
+    const result = await run(
       `
       INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -238,11 +238,11 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mimeType || null,
       ]
     );
-    return;
+    return result?.lastID;
   }
 
   if (schema.hasDirection && schema.hasMessageType) {
-    await run(
+    const result = await run(
       `
       INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -259,11 +259,11 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mimeType || null,
       ]
     );
-    return;
+    return result?.lastID;
   }
 
   if (schema.hasDirection) {
-    await run(
+    const result = await run(
       `
       INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -279,10 +279,10 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mimeType || null,
       ]
     );
-    return;
+    return result?.lastID;
   }
 
-  await run(
+  const result = await run(
     `
     INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -298,6 +298,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
       mimeType || null,
     ]
   );
+  return result?.lastID;
 }
 
 async function buildHistory(conversationId, limit = 10) {
@@ -468,7 +469,7 @@ async function handleIncomingMessage(message) {
     const lastMessageText = message.body || mediaPreview || "";
     const bodyToStore = message.body || mediaPreview || "[media]";
 
-    await saveMessage({
+    const savedId = await saveMessage({
       conversationId: conversation.id,
       fromMe: false,
       body: bodyToStore,
@@ -485,9 +486,32 @@ async function handleIncomingMessage(message) {
       lastMessage: lastMessageText,
       updatedAt: timestamp,
     });
+    const snapshot = await getConversationSnapshot(conversation.id);
     sendEvent("message_received", {
       conversationId: conversation.id,
       contactId: conversation?.contact_id || normalizedContactId || rawContactId,
+      message: {
+        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+        conversationId: String(conversation.id),
+        content: bodyToStore || "",
+        sender: "contact",
+        timestamp,
+        messageType: "incoming",
+        mediaType: media?.mediaType || null,
+        mediaUrl: media?.mediaUrl || null,
+        mimeType: media?.mimeType || null,
+      },
+      conversation: snapshot
+        ? {
+            id: String(snapshot.id),
+            contactName: toDisplayName(snapshot),
+            lastMessage: snapshot.last_message || lastMessageText,
+            timestamp: snapshot.updated_at || timestamp,
+            unread: snapshot.unread_count || 0,
+            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+            resolvedAt: snapshot.resolved_at || null,
+          }
+        : undefined,
     });
     sendEvent("conversation_updated", { conversationId: conversation.id });
 
@@ -567,9 +591,10 @@ async function handleIncomingMessage(message) {
 
     for (let i = 0; i < messagesToSend.length; i += 1) {
       const body = messagesToSend[i];
-      const outTimestamp = new Date().toISOString();
-      await client.sendMessage(contactId, body);
-      await saveMessage({
+      const sentMessage = await client.sendMessage(contactId, body);
+      registerOutgoingMessageId(sentMessage);
+      const outTimestamp = getMessageTimestampIso(sentMessage);
+      const savedId = await saveMessage({
         conversationId: conversation.id,
         fromMe: true,
         body,
@@ -582,7 +607,32 @@ async function handleIncomingMessage(message) {
         lastMessage: body,
         updatedAt: outTimestamp,
       });
-      sendEvent("message_sent", { conversationId: conversation.id });
+      const snapshot = await getConversationSnapshot(conversation.id);
+      sendEvent("message_sent", {
+        conversationId: conversation.id,
+        message: {
+          id: String(savedId || sentMessage?.id?._serialized || `${conversation.id}:${outTimestamp}`),
+          conversationId: String(conversation.id),
+          content: body,
+          sender: "ai",
+          timestamp: outTimestamp,
+          messageType: "ai",
+          mediaType: null,
+          mediaUrl: null,
+          mimeType: null,
+        },
+        conversation: snapshot
+          ? {
+              id: String(snapshot.id),
+              contactName: toDisplayName(snapshot),
+              lastMessage: snapshot.last_message || body,
+              timestamp: snapshot.updated_at || outTimestamp,
+              unread: snapshot.unread_count || 0,
+              aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+              resolvedAt: snapshot.resolved_at || null,
+            }
+          : undefined,
+      });
       sendEvent("conversation_updated", { conversationId: conversation.id });
       if (i < messagesToSend.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, env.HUMAN_SPLIT_DELAY_MS));
@@ -601,6 +651,33 @@ async function handleIncomingMessage(message) {
 
 function resolveOutgoingContactId(message) {
   return message?.to || message?.id?.remote || null;
+}
+
+function registerOutgoingMessageId(message) {
+  const messageId = message?.id?.id || message?.id?._serialized;
+  if (!messageId) return;
+  processedMessageIds.set(`out:id:${messageId}`, Date.now());
+}
+
+async function getConversationSnapshot(conversationId) {
+  return get(
+    `
+    SELECT id, name, contact_name, contact_id, last_message, updated_at, unread_count, ai_enabled, resolved_at
+    FROM conversations
+    WHERE id = ?
+    LIMIT 1
+    `,
+    [conversationId]
+  );
+}
+
+function toDisplayName(snapshot) {
+  const raw =
+    snapshot?.name ||
+    snapshot?.contact_name ||
+    snapshot?.contact_id ||
+    "";
+  return raw.replace(/@c\.us$/i, "").replace(/@g\.us$/i, "") || snapshot?.contact_id || "";
 }
 
 async function handleOutgoingMessage(message) {
@@ -631,10 +708,12 @@ async function handleOutgoingMessage(message) {
       processedMessageKeys.set(dedupeKey, now);
     }
 
+    const normalizedContactId = normalizeContactId(rawContactId);
     const chat = await message.getChat().catch(() => null);
-    const contactName = chat?.name || chat?.id?.user || rawContactId;
-    const conversation = await ensureConversation(rawContactId, contactName);
-    await ensureContact(rawContactId);
+    const contactName = chat?.name || chat?.id?.user || normalizedContactId || rawContactId;
+    const existing = await findConversationByContactId(rawContactId, normalizedContactId);
+    const conversation = existing || (await ensureConversation(normalizedContactId || rawContactId, contactName));
+    await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
 
     const timestamp = getMessageTimestampIso(message);
     const mediaType = message?.hasMedia ? message?.type || "media" : null;
@@ -659,7 +738,7 @@ async function handleOutgoingMessage(message) {
       return;
     }
 
-    await saveMessage({
+    const savedId = await saveMessage({
       conversationId: conversation.id,
       fromMe: true,
       body: bodyToStore,
@@ -675,7 +754,32 @@ async function handleOutgoingMessage(message) {
       lastMessage: bodyToStore,
       updatedAt: timestamp,
     });
-    sendEvent("message_sent", { conversationId: conversation.id });
+    const snapshot = await getConversationSnapshot(conversation.id);
+    sendEvent("message_sent", {
+      conversationId: conversation.id,
+      message: {
+        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+        conversationId: String(conversation.id),
+        content: bodyToStore,
+        sender: "user",
+        timestamp,
+        messageType: "manual",
+        mediaType,
+        mediaUrl: null,
+        mimeType: null,
+      },
+      conversation: snapshot
+        ? {
+            id: String(snapshot.id),
+            contactName: toDisplayName(snapshot),
+            lastMessage: snapshot.last_message || bodyToStore,
+            timestamp: snapshot.updated_at || timestamp,
+            unread: snapshot.unread_count || 0,
+            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+            resolvedAt: snapshot.resolved_at || null,
+          }
+        : undefined,
+    });
     sendEvent("conversation_updated", { conversationId: conversation.id });
   } catch (error) {
     log("error", "outgoing_message_handling_failed", { error: error?.message });
@@ -862,11 +966,14 @@ async function disconnect() {
 
 async function sendManualMessage({ to, body }) {
   if (!client) throw new Error("WhatsApp client not initialized");
-  const convo = await ensureConversation(to, to);
-  await ensureContact(to);
-  await client.sendMessage(to, body);
-  const outTimestamp = new Date().toISOString();
-  await saveMessage({
+  const normalizedTo = normalizeContactId(to);
+  const existing = await findConversationByContactId(to, normalizedTo);
+  const convo = existing || (await ensureConversation(normalizedTo || to, to));
+  await ensureContact(convo?.contact_id || normalizedTo || to);
+  const sentMessage = await client.sendMessage(convo?.contact_id || normalizedTo || to, body);
+  registerOutgoingMessageId(sentMessage);
+  const outTimestamp = getMessageTimestampIso(sentMessage);
+  const savedId = await saveMessage({
     conversationId: convo.id,
     fromMe: true,
     body,
@@ -879,7 +986,32 @@ async function sendManualMessage({ to, body }) {
     lastMessage: body,
     updatedAt: outTimestamp,
   });
-  sendEvent("message_sent", { conversationId: convo.id });
+  const snapshot = await getConversationSnapshot(convo.id);
+  sendEvent("message_sent", {
+    conversationId: convo.id,
+    message: {
+      id: String(savedId || sentMessage?.id?._serialized || `${convo.id}:${outTimestamp}`),
+      conversationId: String(convo.id),
+      content: body,
+      sender: "user",
+      timestamp: outTimestamp,
+      messageType: "manual",
+      mediaType: null,
+      mediaUrl: null,
+      mimeType: null,
+    },
+    conversation: snapshot
+      ? {
+          id: String(snapshot.id),
+          contactName: toDisplayName(snapshot),
+          lastMessage: snapshot.last_message || body,
+          timestamp: snapshot.updated_at || outTimestamp,
+          unread: snapshot.unread_count || 0,
+          aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+          resolvedAt: snapshot.resolved_at || null,
+        }
+      : undefined,
+  });
   sendEvent("conversation_updated", { conversationId: convo.id });
 }
 
