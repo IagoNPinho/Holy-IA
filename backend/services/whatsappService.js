@@ -456,17 +456,18 @@ async function buildHistory(conversationId, limit = 10) {
     .filter((row) => row.content && (row.role === "user" || row.role === "assistant"));
 }
 
-async function updateConversation({ id, name, lastMessage, updatedAt }) {
+async function updateConversation({ id, name, contactName, lastMessage, updatedAt }) {
   const finalUpdatedAt = updatedAt || new Date().toISOString();
   await run(
     `
     UPDATE conversations
     SET name = COALESCE(?, name),
+        contact_name = COALESCE(?, contact_name),
         last_message = ?,
         updated_at = ?
     WHERE id = ?
     `,
-    [name || null, lastMessage || null, finalUpdatedAt, id]
+    [name || null, contactName || null, lastMessage || null, finalUpdatedAt, id]
   );
 }
 
@@ -879,7 +880,8 @@ async function backfillConversationHistory({
     return { messages: [], exhausted: false, available: false };
   }
 
-  const resolved = await resolveChatForConversation({
+  const normalizedContactId = normalizeContactId(contactId);
+  let resolved = await resolveChatForConversation({
     contactId,
     conversationName,
     clientInstance: client,
@@ -887,46 +889,157 @@ async function backfillConversationHistory({
 
   log("info", "history_remote_backfill_attempt", {
     conversationId,
+    dbContactId: contactId || null,
+    normalizedContactId: normalizedContactId || null,
     resolvedChatId: resolved.resolvedId,
     resolvedBy: resolved.resolvedBy,
     before: beforeTimestamp || null,
     limit,
+    fetchedCount: 0,
+    oldestFetchedTimestamp: null,
+    newestFetchedTimestamp: null,
+    oldestBodyPreview: null,
+    newestBodyPreview: null,
+    exhausted: false,
   });
 
   if (!resolved.chat) {
     log("info", "history_remote_backfill_exhausted", {
       conversationId,
+      dbContactId: contactId || null,
+      normalizedContactId: normalizedContactId || null,
+      resolvedChatId: null,
+      resolvedBy: resolved.resolvedBy,
+      before: beforeTimestamp || null,
+      limit,
       reason: "chat_not_found",
-    });
-    log("info", "history_remote_backfill_result", {
-      conversationId,
       fetchedCount: 0,
       oldestFetchedTimestamp: null,
       newestFetchedTimestamp: null,
+      oldestBodyPreview: null,
+      newestBodyPreview: null,
+      exhausted: false,
+    });
+    log("info", "history_remote_backfill_result", {
+      conversationId,
+      dbContactId: contactId || null,
+      normalizedContactId: normalizedContactId || null,
+      resolvedChatId: null,
+      resolvedBy: resolved.resolvedBy,
+      before: beforeTimestamp || null,
+      limit,
+      fetchedCount: 0,
+      oldestFetchedTimestamp: null,
+      newestFetchedTimestamp: null,
+      oldestBodyPreview: null,
+      newestBodyPreview: null,
       exhausted: false,
     });
     return { messages: [], exhausted: false, available: false };
   }
 
-  const chat = resolved.chat;
+  let chat = resolved.chat;
   const beforeMs = beforeTimestamp ? new Date(beforeTimestamp).getTime() : null;
-  const fetched = await chat.fetchMessages({ limit: Math.max(limit, 50) });
-  const filtered = fetched.filter((msg) => {
+  const initialLimit = Math.max(limit, 50);
+  let lastFetchLimit = initialLimit;
+  let fetched = await chat.fetchMessages({ limit: initialLimit });
+  let filtered = fetched.filter((msg) => {
     if (!beforeMs) return true;
     const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
     return ts < beforeMs;
   });
 
   if (!filtered.length) {
-    log("info", "history_remote_backfill_exhausted", {
+    const retryLimit = Math.max(limit, 100);
+    lastFetchLimit = retryLimit;
+    log("info", "history_remote_backfill_retry", {
       conversationId,
-      reason: "no_older_messages",
-    });
-    log("info", "history_remote_backfill_result", {
-      conversationId,
+      dbContactId: contactId || null,
+      normalizedContactId: normalizedContactId || null,
+      resolvedChatId: resolved.resolvedId,
+      resolvedBy: resolved.resolvedBy,
+      before: beforeTimestamp || null,
+      limit: retryLimit,
       fetchedCount: 0,
       oldestFetchedTimestamp: null,
       newestFetchedTimestamp: null,
+      oldestBodyPreview: null,
+      newestBodyPreview: null,
+      exhausted: false,
+    });
+    fetched = await chat.fetchMessages({ limit: retryLimit });
+    filtered = fetched.filter((msg) => {
+      if (!beforeMs) return true;
+      const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
+      return ts < beforeMs;
+    });
+  }
+
+  if (!filtered.length) {
+    const refreshed = await resolveChatForConversation({
+      contactId,
+      conversationName,
+      clientInstance: client,
+    });
+    if (refreshed.chat && refreshed.resolvedId !== resolved.resolvedId) {
+      resolved = refreshed;
+      chat = refreshed.chat;
+      const retryLimit = Math.max(limit, 100);
+      lastFetchLimit = retryLimit;
+      log("info", "history_remote_backfill_retry", {
+        conversationId,
+        dbContactId: contactId || null,
+        normalizedContactId: normalizedContactId || null,
+        resolvedChatId: resolved.resolvedId,
+        resolvedBy: resolved.resolvedBy,
+        before: beforeTimestamp || null,
+        limit: retryLimit,
+        fetchedCount: 0,
+        oldestFetchedTimestamp: null,
+        newestFetchedTimestamp: null,
+        oldestBodyPreview: null,
+        newestBodyPreview: null,
+        exhausted: false,
+      });
+      fetched = await chat.fetchMessages({ limit: retryLimit });
+      filtered = fetched.filter((msg) => {
+        if (!beforeMs) return true;
+        const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
+        return ts < beforeMs;
+      });
+    }
+  }
+
+  if (!filtered.length) {
+    log("info", "history_remote_backfill_exhausted", {
+      conversationId,
+      dbContactId: contactId || null,
+      normalizedContactId: normalizedContactId || null,
+      resolvedChatId: resolved.resolvedId,
+      resolvedBy: resolved.resolvedBy,
+      before: beforeTimestamp || null,
+      limit: lastFetchLimit,
+      reason: "no_older_messages",
+      fetchedCount: 0,
+      oldestFetchedTimestamp: null,
+      newestFetchedTimestamp: null,
+      oldestBodyPreview: null,
+      newestBodyPreview: null,
+      exhausted: true,
+    });
+    log("info", "history_remote_backfill_result", {
+      conversationId,
+      dbContactId: contactId || null,
+      normalizedContactId: normalizedContactId || null,
+      resolvedChatId: resolved.resolvedId,
+      resolvedBy: resolved.resolvedBy,
+      before: beforeTimestamp || null,
+      limit: lastFetchLimit,
+      fetchedCount: 0,
+      oldestFetchedTimestamp: null,
+      newestFetchedTimestamp: null,
+      oldestBodyPreview: null,
+      newestBodyPreview: null,
       exhausted: true,
     });
     return { messages: [], exhausted: true, available: true };
@@ -1023,6 +1136,12 @@ async function backfillConversationHistory({
   const newestTimestamp = persistedSorted[0]?.timestamp || null;
   log("info", "history_remote_backfill_result", {
     conversationId,
+    dbContactId: contactId || null,
+    normalizedContactId: normalizedContactId || null,
+    resolvedChatId: resolved.resolvedId,
+    resolvedBy: resolved.resolvedBy,
+    before: beforeTimestamp || null,
+    limit: lastFetchLimit,
     fetchedCount: persisted.length,
     oldestFetchedTimestamp: oldestTimestamp,
     newestFetchedTimestamp: newestTimestamp,
@@ -1044,9 +1163,11 @@ async function syncRecentMessagesForConversation({
   conversationName,
   limit = 100,
 }) {
+  const normalizedContactId = normalizeContactId(contactId);
   log("info", "recent_sync_start", {
     conversationId,
-    contactId,
+    dbContactId: contactId || null,
+    normalizedContactId: normalizedContactId || null,
     limit,
   });
 
@@ -1066,7 +1187,7 @@ async function syncRecentMessagesForConversation({
     log("info", "recent_sync_chat_resolved", {
       conversationId,
       dbContactId: contactId,
-      normalizedContactId: resolved.normalizedContactId || null,
+      normalizedContactId: resolved.normalizedContactId || normalizedContactId || null,
       resolvedChatId: null,
       resolvedBy: resolved.resolvedBy,
       found: false,
@@ -1077,7 +1198,7 @@ async function syncRecentMessagesForConversation({
   log("info", "recent_sync_chat_resolved", {
     conversationId,
     dbContactId: contactId,
-    normalizedContactId: resolved.normalizedContactId || null,
+    normalizedContactId: resolved.normalizedContactId || normalizedContactId || null,
     resolvedChatId: resolved.resolvedId,
     resolvedBy: resolved.resolvedBy,
     found: true,
@@ -1093,6 +1214,8 @@ async function syncRecentMessagesForConversation({
     fetchedCount: fetched.length,
     newestTimestamp,
     oldestTimestamp,
+    newestBodyPreview: getBodyPreview(sorted[sorted.length - 1]?.body || ""),
+    oldestBodyPreview: getBodyPreview(sorted[0]?.body || ""),
   });
 
   let persistedCount = 0;
@@ -1189,7 +1312,14 @@ async function syncRecentMessagesForConversation({
       const lastMessage = newest.body || (newest.hasMedia ? getMediaPreviewLabel(newest.type || "media") : "");
       await updateConversation({
         id: conversationId,
-        name: chat.name || chat?.id?.user || resolved.resolvedId || resolved.normalizedContactId || contactId,
+        name:
+          chat.name ||
+          chat.pushname ||
+          chat?.id?.user ||
+          resolved.resolvedId ||
+          resolved.normalizedContactId ||
+          contactId,
+        contactName: chat.name || chat.pushname || null,
         lastMessage,
         updatedAt,
       });
@@ -1690,16 +1820,17 @@ async function syncInitialChats(clientInstance) {
       [contactId, name, lastMessage, updatedAt, aiEnabledValue]
     );
     if (result?.changes) chatsSaved += 1;
-    await run(
-      `
-      UPDATE conversations
-      SET name = COALESCE(?, name),
-          last_message = ?,
-          updated_at = ?
-      WHERE contact_id = ?
-      `,
-      [name || null, lastMessage || null, updatedAt, contactId]
-    );
+      await run(
+        `
+        UPDATE conversations
+        SET name = COALESCE(?, name),
+            contact_name = COALESCE(?, contact_name),
+            last_message = ?,
+            updated_at = ?
+        WHERE contact_id = ?
+        `,
+        [name || null, name || null, lastMessage || null, updatedAt, contactId]
+      );
     await ensureContact(contactId);
   }
 

@@ -87,7 +87,15 @@ export default function DashboardPage() {
   const formatContactName = useCallback((name: string | null) => {
     const trimmed = (name || "").trim()
     if (!trimmed) return "Contato sem nome"
-    const cleaned = trimmed.replace(/@c\.us$/i, "").replace(/@g\.us$/i, "")
+    const cleaned = trimmed
+      .replace(/@c\.us$/i, "")
+      .replace(/@g\.us$/i, "")
+      .replace(/@lid$/i, "")
+    if (!cleaned) return "Contato sem nome"
+    if (cleaned.includes("@")) {
+      const [head] = cleaned.split("@")
+      return head || "Contato sem nome"
+    }
     return cleaned || "Contato sem nome"
   }, [])
 

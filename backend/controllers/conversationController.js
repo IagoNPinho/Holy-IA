@@ -12,11 +12,15 @@ async function listConversations(req, res, next) {
       `
       SELECT
         c.id,
-        CASE
-          WHEN c.name IS NULL OR c.name = '' THEN COALESCE(c.contact_name, REPLACE(REPLACE(c.contact_id, '@c.us', ''), '@g.us', ''), c.contact_id)
-          WHEN c.name = c.contact_id THEN COALESCE(c.contact_name, REPLACE(REPLACE(c.contact_id, '@c.us', ''), '@g.us', ''), c.contact_id)
-          ELSE c.name
-        END AS name,
+          CASE
+            WHEN c.contact_name IS NOT NULL AND c.contact_name != '' THEN c.contact_name
+            WHEN c.name IS NOT NULL AND c.name != '' AND c.name != c.contact_id THEN c.name
+            ELSE COALESCE(
+              NULLIF(REPLACE(REPLACE(REPLACE(c.contact_id, '@c.us', ''), '@g.us', ''), '@lid', ''), ''),
+              c.contact_id,
+              'Contato sem nome'
+            )
+          END AS name,
         COALESCE(c.ai_enabled, 1) AS ai_enabled,
         COALESCE(c.unread_count, 0) AS unread_count,
         c.resolved_at,
