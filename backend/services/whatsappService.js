@@ -308,10 +308,10 @@ function getMessageTimestampIso(message) {
 }
 
 function getMediaPreviewLabel(mediaType) {
-  if (mediaType === "image") return "ðŸ“· Foto";
-  if (mediaType === "video") return "ðŸŽ¥ VÃ­deo";
-  if (mediaType === "audio" || mediaType === "ptt") return "ðŸŽ§ Ãudio";
-  return "ðŸ“Ž Documento";
+  if (mediaType === "image") return "Foto"
+  if (mediaType === "video") return "Vídeo"
+  if (mediaType === "audio" || mediaType === "ptt") return "Áudio"
+  return "Documento";
 }
 
 async function loadMessageSchema() {
@@ -345,10 +345,11 @@ async function saveMessage({
   const schema = await loadMessageSchema();
   const direction = fromMe ? "out" : "in";
   const finalType = messageType || (fromMe ? "manual" : "incoming");
+  const insertMode = whatsappMessageId ? "INSERT OR IGNORE" : "INSERT";
   if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      ${insertMode} INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
@@ -372,7 +373,7 @@ async function saveMessage({
   if (schema.hasDirection && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      ${insertMode} INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
@@ -395,7 +396,7 @@ async function saveMessage({
   if (schema.hasDirection) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      ${insertMode} INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
@@ -603,12 +604,20 @@ async function handleIncomingMessage(message) {
     const media = await saveIncomingMedia(message);
     const mediaPreview = media ? getMediaPreviewLabel(media.mediaType) : null;
     const lastMessageText = message.body || mediaPreview || "";
-    const bodyToStore = message.body || mediaPreview || "[media]";
+    const bodyToStore = message.body || mediaPreview || "";
+    if (!bodyToStore && !media?.mediaType) {
+      log("info", "inbound_message_skipped_empty", {
+        contactId,
+        messageId,
+        messageType: message?.type || null,
+      });
+      return;
+    }
 
     const savedId = await saveMessage({
       conversationId: conversation.id,
       fromMe: false,
-      body: bodyToStore,
+      body: bodyToStore || "[media]",
       timestamp,
       messageType: "incoming",
       intent,
@@ -1051,6 +1060,14 @@ async function backfillConversationHistory({
     const ts = getMessageTimestampIso(msg);
     let mediaType = msg?.hasMedia ? msg?.type || "media" : null;
     const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
+    if (!bodyToStore && !mediaType) {
+      log("info", "history_remote_backfill_skipped_empty", {
+        conversationId,
+        whatsappMessageId: whatsappId || null,
+        messageType: msg?.type || null,
+      });
+      continue;
+    }
 
     if (whatsappId) {
       const existing = await get(
@@ -1110,6 +1127,16 @@ async function backfillConversationHistory({
       whatsappMessageId: whatsappId,
       mediaFilename,
     });
+
+    if (!savedId) {
+      log("info", "history_remote_backfill_skipped_duplicate", {
+        conversationId,
+        whatsappMessageId: whatsappId || null,
+        bodyPreview: getBodyPreview(bodyToStore),
+        reason: "insert_ignored",
+      });
+      continue;
+    }
 
     persisted.push({
       id: savedId || null,
@@ -1205,6 +1232,7 @@ async function syncRecentMessagesForConversation({
   });
 
   const chat = resolved.chat;
+  const chatContact = await chat.getContact().catch(() => null);
   const fetched = await chat.fetchMessages({ limit });
   const sorted = [...fetched].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const oldestTimestamp = sorted[0] ? getMessageTimestampIso(sorted[0]) : null;
@@ -1226,6 +1254,14 @@ async function syncRecentMessagesForConversation({
     const fromMe = Boolean(msg.fromMe);
     let mediaType = msg?.hasMedia ? msg?.type || "media" : null;
     const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
+    if (!bodyToStore && !mediaType) {
+      log("info", "recent_sync_skipped_empty", {
+        conversationId,
+        whatsappMessageId: whatsappId || null,
+        messageType: msg?.type || null,
+      });
+      continue;
+    }
 
     if (whatsappId) {
       const existing = await get(
@@ -1286,7 +1322,7 @@ async function syncRecentMessagesForConversation({
       }
     }
 
-    await saveMessage({
+    const savedId = await saveMessage({
       conversationId,
       fromMe,
       body: bodyToStore,
@@ -1298,6 +1334,15 @@ async function syncRecentMessagesForConversation({
       whatsappMessageId: whatsappId,
       mediaFilename,
     });
+    if (!savedId) {
+      log("info", "recent_sync_skipped_duplicate", {
+        conversationId,
+        whatsappMessageId: whatsappId || null,
+        bodyPreview: getBodyPreview(bodyToStore),
+        reason: "insert_ignored",
+      });
+      continue;
+    }
     persistedCount += 1;
     log("info", "recent_sync_persisted", {
       conversationId,
@@ -1310,16 +1355,17 @@ async function syncRecentMessagesForConversation({
       const newest = sorted[sorted.length - 1];
       const updatedAt = getMessageTimestampIso(newest);
       const lastMessage = newest.body || (newest.hasMedia ? getMediaPreviewLabel(newest.type || "media") : "");
+      const preferredName =
+        chat.name || chat.pushname || chatContact?.pushname || chatContact?.name || null;
       await updateConversation({
         id: conversationId,
         name:
-          chat.name ||
-          chat.pushname ||
+          preferredName ||
           chat?.id?.user ||
           resolved.resolvedId ||
           resolved.normalizedContactId ||
           contactId,
-        contactName: chat.name || chat.pushname || null,
+        contactName: preferredName,
         lastMessage,
         updatedAt,
       });
@@ -1371,16 +1417,32 @@ async function handleOutgoingMessage(message) {
       });
       return;
     }
-    const chat = await message.getChat().catch(() => null);
-    const contactName = chat?.name || chat?.id?.user || normalizedContactId || rawContactId;
+      const chat = await message.getChat().catch(() => null);
+      const chatContact = await chat?.getContact().catch(() => null);
+      const contactName =
+        chat?.name ||
+        chat?.pushname ||
+        chatContact?.pushname ||
+        chatContact?.name ||
+        chat?.id?.user ||
+        normalizedContactId ||
+        rawContactId;
     const existingConversation = await findConversationByContactId(rawContactId, normalizedContactId);
     const conversation = existingConversation || (await ensureConversation(normalizedContactId || rawContactId, contactName));
     await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
 
     const timestamp = getMessageTimestampIso(message);
     const mediaType = message?.hasMedia ? message?.type || "media" : null;
-    const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
-    const bodyToStore = message.body || mediaPreview || "[media]";
+      const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
+      const bodyToStore = message.body || mediaPreview || "";
+      if (!bodyToStore && !mediaType) {
+        log("info", "outgoing_message_skipped_empty", {
+          contactId: normalizedContactId || rawContactId,
+          messageId: messageId || null,
+          messageType: message?.type || null,
+        });
+        return;
+      }
 
     if (messageId) {
       const existingByWhatsappId = await get(
@@ -1865,3 +1927,4 @@ module.exports = {
   scheduleSend,
   syncInitialChats,
 };
+
