@@ -218,9 +218,15 @@ export default function DashboardPage() {
   }, [selectedId, refreshMessages])
 
   const handleMessageEvent = useCallback(
-    async (payload?: any) => {
+    async (eventType: "message_received" | "message_sent", payload?: any) => {
       const targetId = payload?.conversation?.id || payload?.conversationId
       const message = payload?.message
+      console.debug("[SSE]", eventType, {
+        conversationId: String(targetId || ""),
+        messageId: message?.id || null,
+        hasMessage: Boolean(message),
+        hasConversation: Boolean(payload?.conversation),
+      })
       if (message) {
         addMessage({
           id: String(message.id),
@@ -232,6 +238,10 @@ export default function DashboardPage() {
           mediaType: message.mediaType || null,
           mediaUrl: message.mediaUrl || null,
           mimeType: message.mimeType || null,
+        })
+        console.debug("[SSE] store_patch_message", {
+          conversationId: String(targetId || ""),
+          messageId: message.id || null,
         })
       }
       if (payload?.conversation) {
@@ -247,6 +257,7 @@ export default function DashboardPage() {
           aiEnabled: nextConversation.aiEnabled ?? true,
           resolvedAt: nextConversation.resolvedAt || null,
         })
+        console.debug("[SSE] store_patch_conversation", { conversationId: String(nextConversation.id) })
       } else if (targetId) {
         scheduleConversationsRefresh()
       }
@@ -260,6 +271,10 @@ export default function DashboardPage() {
   const handleConversationEvent = useCallback(
     async (payload?: any) => {
       const targetId = payload?.conversation?.id || payload?.conversationId
+      console.debug("[SSE] conversation_updated", {
+        conversationId: String(targetId || ""),
+        hasConversation: Boolean(payload?.conversation),
+      })
       if (payload?.conversation) {
         upsertConversation({
           id: String(payload.conversation.id),
@@ -276,18 +291,19 @@ export default function DashboardPage() {
           lastMessage: payload.lastMessage || "",
           timestamp: payload.updatedAt || "",
         } as any)
+        console.debug("[SSE] store_patch_conversation_min", { conversationId: String(targetId || "") })
       } else {
         scheduleConversationsRefresh()
       }
-      if (targetId && String(targetId) === selectedId && !payload?.conversation) {
+      if (targetId && String(targetId) === selectedId && !payload?.conversation && !payload?.lastMessage && !payload?.updatedAt) {
         await refreshMessages(String(targetId))
       }
     },
     [refreshMessages, scheduleConversationsRefresh, selectedId, upsertConversation]
   )
 
-  useEvents("message_received", handleMessageEvent)
-  useEvents("message_sent", handleMessageEvent)
+  useEvents("message_received", (payload) => handleMessageEvent("message_received", payload))
+  useEvents("message_sent", (payload) => handleMessageEvent("message_sent", payload))
   useEvents("conversation_updated", handleConversationEvent)
 
   useEffect(() => {

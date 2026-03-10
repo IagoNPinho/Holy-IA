@@ -239,15 +239,26 @@ async function loadMessageSchema() {
   return messageSchema;
 }
 
-async function saveMessage({ conversationId, fromMe, body, timestamp, messageType, intent, mediaType, mediaUrl, mimeType }) {
+async function saveMessage({
+  conversationId,
+  fromMe,
+  body,
+  timestamp,
+  messageType,
+  intent,
+  mediaType,
+  mediaUrl,
+  mimeType,
+  whatsappMessageId,
+}) {
   const schema = await loadMessageSchema();
   const direction = fromMe ? "out" : "in";
   const finalType = messageType || (fromMe ? "manual" : "incoming");
   if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -260,6 +271,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mediaType || null,
         mediaUrl || null,
         mimeType || null,
+        whatsappMessageId || null,
       ]
     );
     return result?.lastID;
@@ -268,8 +280,8 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
   if (schema.hasDirection && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -281,6 +293,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mediaType || null,
         mediaUrl || null,
         mimeType || null,
+        whatsappMessageId || null,
       ]
     );
     return result?.lastID;
@@ -289,8 +302,8 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
   if (schema.hasDirection) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type, whatsapp_message_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -301,6 +314,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
         mediaType || null,
         mediaUrl || null,
         mimeType || null,
+        whatsappMessageId || null,
       ]
     );
     return result?.lastID;
@@ -308,8 +322,8 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
 
   const result = await run(
     `
-    INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type, whatsapp_message_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       conversationId,
@@ -320,6 +334,7 @@ async function saveMessage({ conversationId, fromMe, body, timestamp, messageTyp
       mediaType || null,
       mediaUrl || null,
       mimeType || null,
+      whatsappMessageId || null,
     ]
   );
   return result?.lastID;
@@ -503,6 +518,7 @@ async function handleIncomingMessage(message) {
       mediaType: media?.mediaType || null,
       mediaUrl: media?.mediaUrl || null,
       mimeType: media?.mimeType || null,
+      whatsappMessageId: messageId || null,
     });
     log("info", "inbound_message_persisted", {
       conversationId: conversation.id,
@@ -644,6 +660,7 @@ async function handleIncomingMessage(message) {
         body,
         timestamp: outTimestamp,
         messageType: "ai",
+        whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
       });
       log("info", "outbound_ai_message_persisted", {
         conversationId: conversation.id,
@@ -794,6 +811,22 @@ async function handleOutgoingMessage(message) {
     const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
     const bodyToStore = message.body || mediaPreview || "[media]";
 
+    if (messageId) {
+      const existingByWhatsappId = await get(
+        `
+        SELECT id
+        FROM messages
+        WHERE whatsapp_message_id = ?
+        LIMIT 1
+        `,
+        [messageId]
+      );
+      if (existingByWhatsappId?.id) {
+        log("info", "outgoing_message_already_persisted_by_id", { messageId, conversationId: conversation.id });
+        return;
+      }
+    }
+
     const existingMessage = await get(
       `
       SELECT id
@@ -821,6 +854,7 @@ async function handleOutgoingMessage(message) {
       mediaType,
       mediaUrl: null,
       mimeType: null,
+      whatsappMessageId: messageId || null,
     });
     log("info", "outbound_linked_message_persisted", {
       conversationId: conversation.id,
@@ -1065,9 +1099,11 @@ async function sendManualMessage({ to, body }) {
   const convo = existing || (await ensureConversation(normalizedTo || to, to));
   await ensureContact(convo?.contact_id || normalizedTo || to);
   const targetId = convo?.contact_id || normalizedTo || to;
+  const pendingKey = `${targetId}:${body}:out`;
+  pendingOutbound.set(pendingKey, { ts: Date.now(), messageId: null });
+  setTimeout(() => pendingOutbound.delete(pendingKey), 30000);
   const sentMessage = await client.sendMessage(targetId, body);
   registerOutgoingMessageId(sentMessage);
-  const pendingKey = `${targetId}:${body}:out`;
   pendingOutbound.set(pendingKey, { ts: Date.now(), messageId: sentMessage?.id?._serialized || null });
   setTimeout(() => pendingOutbound.delete(pendingKey), 30000);
   const outTimestamp = getMessageTimestampIso(sentMessage);
@@ -1077,6 +1113,7 @@ async function sendManualMessage({ to, body }) {
     body,
     timestamp: outTimestamp,
     messageType: "manual",
+    whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
   });
   log("info", "outbound_panel_message_persisted", {
     conversationId: convo.id,
