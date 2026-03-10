@@ -1,6 +1,6 @@
 // Conversation and message read endpoints.
 const { all, run, get } = require("../database/db");
-const { sendManualMessage, backfillConversationHistory } = require("../services/whatsappService");
+const { sendManualMessage, backfillConversationHistory, syncRecentMessagesForConversation } = require("../services/whatsappService");
 const { sendEvent } = require("../services/sseService");
 
 async function listConversations(req, res, next) {
@@ -59,6 +59,18 @@ async function listMessages(req, res, next) {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 200);
     const before = req.query.before;
     const fetchLimit = limit + 1;
+    if (!before) {
+      const convo = await get("SELECT contact_id FROM conversations WHERE id = ? LIMIT 1", [
+        conversationId,
+      ]);
+      if (convo?.contact_id) {
+        await syncRecentMessagesForConversation({
+          conversationId: Number(conversationId),
+          contactId: convo.contact_id,
+          limit: Math.min(limit, 100),
+        });
+      }
+    }
     const dbMessages = await all(
       `
       SELECT

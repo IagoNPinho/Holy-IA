@@ -151,7 +151,19 @@ Outbound flow:
 
 ---
 
-### 4. Persistence Layer
+### 4. Recent Sync Strategy
+
+The backend uses a lightweight, DB-first reconciliation model:
+
+- **Bootstrap sync** (on WhatsApp ready): sync 50 recent chats, hydrate 20 chats with ~20 recent messages.
+- **Open-thread sync** (first `/messages/:id` page): reconcile latest ~100 messages from WhatsApp into SQLite before serving.
+- **Older history**: DB-first pagination with remote backfill only when DB history is exhausted.
+
+This keeps history lightweight while ensuring recent messages are reconciled with WhatsApp Web.
+
+---
+
+### 5. Persistence Layer
 
 Current database: SQLite
 
@@ -178,7 +190,7 @@ For now, current implementation may operate with implicit default values.
 
 ---
 
-### 5. Realtime Layer (SSE)
+### 6. Realtime Layer (SSE)
 
 Responsibilities:
 
