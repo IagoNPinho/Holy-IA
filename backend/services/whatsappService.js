@@ -122,6 +122,8 @@ function getPreferredContactName({ chat, contact, fallback }) {
     chat?.pushname ||
     contact?.pushname ||
     contact?.verifiedName ||
+    contact?.businessName ||
+    contact?.businessProfile?.name ||
     contact?.name ||
     fallback ||
     null

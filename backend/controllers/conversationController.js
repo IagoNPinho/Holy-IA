@@ -1,6 +1,11 @@
 // Conversation and message read endpoints.
 const { all, run, get } = require("../database/db");
-const { sendManualMessage, backfillConversationHistory, syncRecentMessagesForConversation } = require("../services/whatsappService");
+const {
+  sendManualMessage,
+  backfillConversationHistory,
+  syncRecentMessagesForConversation,
+  getStatus,
+} = require("../services/whatsappService");
 const { sendEvent } = require("../services/sseService");
 
 async function listConversations(req, res, next) {
@@ -113,6 +118,13 @@ async function listMessages(req, res, next) {
       let backfillAvailable = false;
       let backfillExhausted = false;
       let backfillAttempted = false;
+
+      if (!before && !hasMoreDb) {
+        const status = getStatus();
+        if (status === "ready" || status === "authenticated") {
+          backfillAvailable = true;
+        }
+      }
 
       if (before && !hasMoreDb) {
         backfillAttempted = true;
