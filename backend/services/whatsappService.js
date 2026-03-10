@@ -116,6 +116,96 @@ function normalizeContactId(contactId) {
   return contactId;
 }
 
+function getNumericContactId(contactId) {
+  if (!contactId || typeof contactId !== "string") return null;
+  const digits = contactId.replace(/\D/g, "");
+  return digits.length >= 6 ? digits : null;
+}
+
+async function resolveChatForConversation({ contactId, conversationName, clientInstance }) {
+  const activeClient = clientInstance || client;
+  const normalizedContactId = normalizeContactId(contactId);
+  if (!activeClient) {
+    return {
+      chat: null,
+      resolvedId: null,
+      resolvedBy: "not_found",
+      normalizedContactId,
+    };
+  }
+
+  if (contactId) {
+    const exactChat = await activeClient.getChatById(contactId).catch(() => null);
+    if (exactChat) {
+      return {
+        chat: exactChat,
+        resolvedId: contactId,
+        resolvedBy: "exact",
+        normalizedContactId,
+      };
+    }
+  }
+
+  if (normalizedContactId && normalizedContactId !== contactId) {
+    const normalizedChat = await activeClient.getChatById(normalizedContactId).catch(() => null);
+    if (normalizedChat) {
+      return {
+        chat: normalizedChat,
+        resolvedId: normalizedContactId,
+        resolvedBy: "normalized",
+        normalizedContactId,
+      };
+    }
+  }
+
+  const digits = getNumericContactId(contactId);
+  let chats = [];
+  if (digits) {
+    chats = await activeClient.getChats().catch(() => []);
+    for (const chat of chats) {
+      if (chat?.isGroup) continue;
+      const chatId = chat?.id?._serialized || chat?.id?.user || chat?.id;
+      const chatDigits = getNumericContactId(chatId);
+      if (chatDigits && chatDigits === digits) {
+        return {
+          chat,
+          resolvedId: chatId,
+          resolvedBy: "numeric_match",
+          normalizedContactId,
+        };
+      }
+    }
+  }
+
+  const safeName = (conversationName || "").trim();
+  if (safeName.length >= 3) {
+    if (!chats.length) {
+      chats = await activeClient.getChats().catch(() => []);
+    }
+    const lowered = safeName.toLowerCase();
+    for (const chat of chats) {
+      if (chat?.isGroup) continue;
+      const chatName = (chat?.name || chat?.pushname || chat?.id?.user || "").trim().toLowerCase();
+      if (chatName && chatName === lowered) {
+        const chatId = chat?.id?._serialized || chat?.id?.user || chat?.id;
+        return {
+          chat,
+          resolvedId: chatId,
+          resolvedBy: "name_match",
+          normalizedContactId,
+        };
+      }
+    }
+  }
+
+  return {
+    chat: null,
+    resolvedId: null,
+    resolvedBy: "not_found",
+    normalizedContactId,
+  };
+}
+
 async function findConversationByContactId(rawContactId, normalizedContactId) {
   let conversation = await get(
     "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
@@ -772,7 +862,13 @@ function toDisplayName(snapshot) {
   return raw.replace(/@c\.us$/i, "").replace(/@g\.us$/i, "") || snapshot?.contact_id || "";
 }
 
-async function backfillConversationHistory({ conversationId, contactId, beforeTimestamp, limit }) {
+async function backfillConversationHistory({
+  conversationId,
+  contactId,
+  conversationName,
+  beforeTimestamp,
+  limit,
+}) {
   const available =
     Boolean(client) && (connectionStatus === "ready" || connectionStatus === "authenticated");
   if (!available) {
@@ -783,24 +879,36 @@ async function backfillConversationHistory({ conversationId, contactId, beforeTi
     return { messages: [], exhausted: false, available: false };
   }
 
+  const resolved = await resolveChatForConversation({
+    contactId,
+    conversationName,
+    clientInstance: client,
+  });
+
   log("info", "history_remote_backfill_attempt", {
     conversationId,
-    contactId,
+    resolvedChatId: resolved.resolvedId,
+    resolvedBy: resolved.resolvedBy,
     before: beforeTimestamp || null,
     limit,
   });
 
-  const normalizedId = normalizeContactId(contactId);
-  const targetId = normalizedId || contactId;
-  const chat = await client.getChatById(targetId).catch(() => null);
-  if (!chat) {
+  if (!resolved.chat) {
     log("info", "history_remote_backfill_exhausted", {
       conversationId,
       reason: "chat_not_found",
     });
+    log("info", "history_remote_backfill_result", {
+      conversationId,
+      fetchedCount: 0,
+      oldestFetchedTimestamp: null,
+      newestFetchedTimestamp: null,
+      exhausted: false,
+    });
     return { messages: [], exhausted: false, available: false };
   }
 
+  const chat = resolved.chat;
   const beforeMs = beforeTimestamp ? new Date(beforeTimestamp).getTime() : null;
   const fetched = await chat.fetchMessages({ limit: Math.max(limit, 50) });
   const filtered = fetched.filter((msg) => {
@@ -814,25 +922,48 @@ async function backfillConversationHistory({ conversationId, contactId, beforeTi
       conversationId,
       reason: "no_older_messages",
     });
+    log("info", "history_remote_backfill_result", {
+      conversationId,
+      fetchedCount: 0,
+      oldestFetchedTimestamp: null,
+      newestFetchedTimestamp: null,
+      exhausted: true,
+    });
     return { messages: [], exhausted: true, available: true };
   }
 
   const persisted = [];
   for (const msg of filtered) {
     const whatsappId = msg?.id?._serialized || msg?.id?.id || null;
+    const ts = getMessageTimestampIso(msg);
+    const mediaType = msg?.hasMedia ? msg?.type || "media" : null;
+    const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
+
     if (whatsappId) {
       const existing = await get(
         "SELECT id FROM messages WHERE whatsapp_message_id = ? LIMIT 1",
         [whatsappId]
       );
       if (existing?.id) continue;
+    } else {
+      const existing = await get(
+        `
+        SELECT id FROM messages
+        WHERE conversation_id = ?
+          AND COALESCE(from_me, 0) = ?
+          AND body = ?
+          AND COALESCE(timestamp, created_at) = ?
+          AND COALESCE(media_type, '') = ?
+        LIMIT 1
+        `,
+        [conversationId, msg.fromMe ? 1 : 0, bodyToStore, ts, mediaType || ""]
+      );
+      if (existing?.id) continue;
     }
 
-    const ts = getMessageTimestampIso(msg);
-    let mediaType = null;
-    let mediaUrl = null;
-    let mimeType = null;
-    let mediaFilename = null;
+      let mediaUrl = null;
+      let mimeType = null;
+      let mediaFilename = null;
     if (msg?.hasMedia) {
       const media = await msg.downloadMedia().catch(() => null);
       if (media?.data) {
@@ -854,7 +985,6 @@ async function backfillConversationHistory({ conversationId, contactId, beforeTi
       }
     }
 
-    const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
     const savedId = await saveMessage({
       conversationId,
       fromMe: Boolean(msg.fromMe),
@@ -886,17 +1016,34 @@ async function backfillConversationHistory({ conversationId, contactId, beforeTi
     conversationId,
     count: persisted.length,
   });
+  const persistedSorted = persisted.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+  const oldestTimestamp = persistedSorted[persistedSorted.length - 1]?.timestamp || null;
+  const newestTimestamp = persistedSorted[0]?.timestamp || null;
+  log("info", "history_remote_backfill_result", {
+    conversationId,
+    fetchedCount: persisted.length,
+    oldestFetchedTimestamp: oldestTimestamp,
+    newestFetchedTimestamp: newestTimestamp,
+    oldestBodyPreview: getBodyPreview(persistedSorted[persistedSorted.length - 1]?.body || ""),
+    newestBodyPreview: getBodyPreview(persistedSorted[0]?.body || ""),
+    exhausted: persisted.length === 0,
+  });
 
   return {
-    messages: persisted.sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    ),
+    messages: persistedSorted,
     exhausted: persisted.length === 0,
     available: true,
   };
 }
 
-async function syncRecentMessagesForConversation({ conversationId, contactId, limit = 100 }) {
+async function syncRecentMessagesForConversation({
+  conversationId,
+  contactId,
+  conversationName,
+  limit = 100,
+}) {
   log("info", "recent_sync_start", {
     conversationId,
     contactId,
@@ -910,27 +1057,52 @@ async function syncRecentMessagesForConversation({ conversationId, contactId, li
     return { fetchedCount: 0, persistedCount: 0 };
   }
 
-  const normalizedId = normalizeContactId(contactId);
-  const targetId = normalizedId || contactId;
-  const chat = await client.getChatById(targetId).catch(() => null);
-  if (!chat) {
-    log("info", "recent_sync_chat_resolved", { conversationId, contactId: targetId, found: false });
+  const resolved = await resolveChatForConversation({
+    contactId,
+    conversationName,
+    clientInstance: client,
+  });
+  if (!resolved.chat) {
+    log("info", "recent_sync_chat_resolved", {
+      conversationId,
+      dbContactId: contactId,
+      normalizedContactId: resolved.normalizedContactId || null,
+      resolvedChatId: null,
+      resolvedBy: resolved.resolvedBy,
+      found: false,
+    });
     return { fetchedCount: 0, persistedCount: 0 };
   }
 
-  log("info", "recent_sync_chat_resolved", { conversationId, contactId: targetId, found: true });
+  log("info", "recent_sync_chat_resolved", {
+    conversationId,
+    dbContactId: contactId,
+    normalizedContactId: resolved.normalizedContactId || null,
+    resolvedChatId: resolved.resolvedId,
+    resolvedBy: resolved.resolvedBy,
+    found: true,
+  });
 
+  const chat = resolved.chat;
   const fetched = await chat.fetchMessages({ limit });
-  log("info", "recent_sync_fetched", { conversationId, fetchedCount: fetched.length });
-
   const sorted = [...fetched].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  const oldestTimestamp = sorted[0] ? getMessageTimestampIso(sorted[0]) : null;
+  const newestTimestamp = sorted[sorted.length - 1] ? getMessageTimestampIso(sorted[sorted.length - 1]) : null;
+  log("info", "recent_sync_fetched", {
+    conversationId,
+    fetchedCount: fetched.length,
+    newestTimestamp,
+    oldestTimestamp,
+  });
+
   let persistedCount = 0;
 
   for (const msg of sorted) {
     const whatsappId = msg?.id?._serialized || msg?.id?.id || null;
     const ts = getMessageTimestampIso(msg);
     const fromMe = Boolean(msg.fromMe);
-    const bodyToStore = msg.body || (msg.hasMedia ? getMediaPreviewLabel(msg.type || "media") : "");
+    const mediaType = msg?.hasMedia ? msg?.type || "media" : null;
+    const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
 
     if (whatsappId) {
       const existing = await get(
@@ -948,25 +1120,25 @@ async function syncRecentMessagesForConversation({ conversationId, contactId, li
     } else {
       const existing = await get(
         `
-        SELECT id FROM messages
-        WHERE conversation_id = ?
-          AND COALESCE(from_me, 0) = ?
-          AND body = ?
-          AND COALESCE(timestamp, created_at) = ?
-        LIMIT 1
-        `,
-        [conversationId, fromMe ? 1 : 0, bodyToStore, ts]
-      );
-      if (existing?.id) {
-        log("info", "recent_sync_skipped_duplicate", {
-          conversationId,
-          bodyPreview: getBodyPreview(bodyToStore),
+          SELECT id FROM messages
+          WHERE conversation_id = ?
+            AND COALESCE(from_me, 0) = ?
+            AND body = ?
+            AND COALESCE(timestamp, created_at) = ?
+            AND COALESCE(media_type, '') = ?
+          LIMIT 1
+          `,
+          [conversationId, fromMe ? 1 : 0, bodyToStore, ts, mediaType || ""]
+        );
+        if (existing?.id) {
+          log("info", "recent_sync_skipped_duplicate", {
+            conversationId,
+            bodyPreview: getBodyPreview(bodyToStore),
         });
         continue;
       }
     }
 
-    let mediaType = null;
     let mediaUrl = null;
     let mimeType = null;
     let mediaFilename = null;
@@ -1011,19 +1183,19 @@ async function syncRecentMessagesForConversation({ conversationId, contactId, li
     });
   }
 
-  if (sorted.length) {
-    const newest = sorted[sorted.length - 1];
-    const updatedAt = getMessageTimestampIso(newest);
-    const lastMessage = newest.body || (newest.hasMedia ? getMediaPreviewLabel(newest.type || "media") : "");
-    await updateConversation({
-      id: conversationId,
-      name: chat.name || chat?.id?.user || targetId,
-      lastMessage,
-      updatedAt,
-    });
-    log("info", "recent_sync_updated_conversation", {
-      conversationId,
-      lastMessagePreview: getBodyPreview(lastMessage),
+    if (sorted.length) {
+      const newest = sorted[sorted.length - 1];
+      const updatedAt = getMessageTimestampIso(newest);
+      const lastMessage = newest.body || (newest.hasMedia ? getMediaPreviewLabel(newest.type || "media") : "");
+      await updateConversation({
+        id: conversationId,
+        name: chat.name || chat?.id?.user || resolved.resolvedId || resolved.normalizedContactId || contactId,
+        lastMessage,
+        updatedAt,
+      });
+      log("info", "recent_sync_updated_conversation", {
+        conversationId,
+        lastMessagePreview: getBodyPreview(lastMessage),
     });
   }
 

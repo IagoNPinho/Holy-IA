@@ -59,18 +59,21 @@ async function listMessages(req, res, next) {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 200);
     const before = req.query.before;
     const fetchLimit = limit + 1;
-    if (!before) {
-      const convo = await get("SELECT contact_id FROM conversations WHERE id = ? LIMIT 1", [
-        conversationId,
-      ]);
-      if (convo?.contact_id) {
-        await syncRecentMessagesForConversation({
-          conversationId: Number(conversationId),
-          contactId: convo.contact_id,
-          limit: Math.min(limit, 100),
-        });
+      let convo = null;
+      if (!before) {
+        convo = await get(
+          "SELECT contact_id, name FROM conversations WHERE id = ? LIMIT 1",
+          [conversationId]
+        );
+        if (convo?.contact_id) {
+          await syncRecentMessagesForConversation({
+            conversationId: Number(conversationId),
+            contactId: convo.contact_id,
+            conversationName: convo?.name || null,
+            limit: Math.min(limit, 100),
+          });
+        }
       }
-    }
     const dbMessages = await all(
       `
       SELECT
@@ -105,17 +108,21 @@ async function listMessages(req, res, next) {
     let backfillExhausted = false;
     let backfillAttempted = false;
 
-    if (before && rows.length === 0) {
-      backfillAttempted = true;
-      const convo = await get("SELECT contact_id FROM conversations WHERE id = ? LIMIT 1", [
-        conversationId,
-      ]);
-      const backfill = await backfillConversationHistory({
-        conversationId: Number(conversationId),
-        contactId: convo?.contact_id,
-        beforeTimestamp: before,
-        limit,
-      });
+      if (before && rows.length === 0) {
+        backfillAttempted = true;
+        if (!convo) {
+          convo = await get(
+            "SELECT contact_id, name FROM conversations WHERE id = ? LIMIT 1",
+            [conversationId]
+          );
+        }
+        const backfill = await backfillConversationHistory({
+          conversationId: Number(conversationId),
+          contactId: convo?.contact_id,
+          conversationName: convo?.name || null,
+          beforeTimestamp: before,
+          limit,
+        });
       rows = backfill.messages;
       backfillAvailable = backfill.available;
       backfillExhausted = backfill.exhausted;

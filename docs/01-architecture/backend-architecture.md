@@ -158,6 +158,7 @@ The backend uses a lightweight, DB-first reconciliation model:
 - **Bootstrap sync** (on WhatsApp ready): sync 50 recent chats, hydrate 20 chats with ~20 recent messages.
 - **Open-thread sync** (first `/messages/:id` page): reconcile latest ~100 messages from WhatsApp into SQLite before serving.
 - **Older history**: DB-first pagination with remote backfill only when DB history is exhausted.
+- **Chat resolution**: resolver tries exact jid, normalized `@lid -> @c.us`, numeric phone match, then safe name match.
 
 This keeps history lightweight while ensuring recent messages are reconciled with WhatsApp Web.
 
