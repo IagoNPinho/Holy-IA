@@ -82,6 +82,7 @@ async function migrate() {
     media_url: "TEXT",
     mime_type: "TEXT",
     whatsapp_message_id: "TEXT",
+    media_filename: "TEXT",
   });
 
   const messageColumns = await all(`PRAGMA table_info(messages)`);

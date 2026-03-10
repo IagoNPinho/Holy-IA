@@ -32,6 +32,8 @@ type MessageApi = {
   media_type?: string | null
   media_url?: string | null
   mime_type?: string | null
+  media_filename?: string | null
+  whatsapp_message_id?: string | null
   intent?: string | null
 }
 
@@ -40,18 +42,23 @@ export default function DashboardPage() {
   const conversationList = useConversationList()
   const setConversations = useConversationStore((state) => state.setConversations)
   const setMessages = useConversationStore((state) => state.setMessages)
+  const addMessages = useConversationStore((state) => state.addMessages)
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
   const addMessage = useConversationStore((state) => state.addMessage)
   const selectedId = useConversationStore((state) => state.selectedId)
   const refreshTimerRef = useRef<number | null>(null)
   const listLengthRef = useRef<number>(0)
+  const messagesCursorRef = useRef<Record<string, string | null>>({})
+  const messagesHasMoreRef = useRef<Record<string, boolean>>({})
 
   const [aiEnabled, setAiEnabled] = useState<boolean>(true)
   const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false)
   const [mobileView, setMobileView] = useState<"list" | "chat">("list")
   const { qr, connected } = useWhatsAppConnection()
+  const messagesLimit = 50
 
   useEffect(() => {
     listLengthRef.current = conversationList.length
@@ -178,7 +185,7 @@ export default function DashboardPage() {
 
   const refreshMessages = useCallback(async (conversationId: string, reason: string) => {
     console.debug("[CHAT_FETCH] refreshMessages called", { conversationId, reason })
-    const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=100`)
+    const res = await request<{ data: MessageApi[] }>(`/messages/${conversationId}?limit=${messagesLimit}`)
     const mapped: Message[] = res.data
       .slice()
       .reverse()
@@ -197,9 +204,53 @@ export default function DashboardPage() {
         mediaType: item.media_type || null,
         mediaUrl: item.media_url || null,
         mimeType: item.mime_type || null,
+        mediaFilename: item.media_filename || null,
+        whatsappMessageId: item.whatsapp_message_id || null,
       }))
     setMessages(conversationId, mapped)
+    messagesCursorRef.current[conversationId] = mapped.length ? mapped[0].timestamp : null
+    messagesHasMoreRef.current[conversationId] = res.data.length >= messagesLimit
   }, [setMessages])
+
+  const loadOlderMessages = useCallback(async (conversationId: string) => {
+    const cursor = messagesCursorRef.current[conversationId]
+    if (!cursor) return
+    if (isLoadingOlder) return
+    setIsLoadingOlder(true)
+    try {
+      const res = await request<{ data: MessageApi[] }>(
+        `/messages/${conversationId}?limit=${messagesLimit}&before=${encodeURIComponent(cursor)}`
+      )
+      const mapped: Message[] = res.data
+        .slice()
+        .reverse()
+        .map((item) => ({
+          id: String(item.id),
+          conversationId,
+          content: item.body,
+          sender: (() => {
+            if (item.message_type === "ai") return "ai"
+            if (item.message_type === "manual") return "user"
+            if (item.message_type === "incoming") return "contact"
+            return item.from_me ? "user" : "contact"
+          })(),
+          timestamp: item.timestamp,
+          messageType: item.message_type || (item.from_me ? "manual" : "incoming"),
+          mediaType: item.media_type || null,
+          mediaUrl: item.media_url || null,
+          mimeType: item.mime_type || null,
+          mediaFilename: item.media_filename || null,
+          whatsappMessageId: item.whatsapp_message_id || null,
+        }))
+      addMessages(conversationId, mapped, { prepend: true })
+      messagesCursorRef.current[conversationId] = mapped.length ? mapped[0].timestamp : cursor
+      messagesHasMoreRef.current[conversationId] = res.data.length >= messagesLimit
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }, [addMessages, isLoadingOlder, messagesLimit])
 
   useEffect(() => {
     let isActive = true
@@ -240,6 +291,8 @@ export default function DashboardPage() {
           mediaType: message.mediaType || null,
           mediaUrl: message.mediaUrl || null,
           mimeType: message.mimeType || null,
+          mediaFilename: message.mediaFilename || null,
+          whatsappMessageId: message.whatsappMessageId || null,
         })
         console.debug("[SSE] store_patch_message", {
           conversationId: String(targetId || ""),
@@ -407,7 +460,14 @@ export default function DashboardPage() {
         )}
 
         {selectedConversation ? (
-          <ChatArea onToggleAi={handleToggleAi} onSendMessage={handleSendMessage} onBack={handleBackToList} />
+          <ChatArea
+            onToggleAi={handleToggleAi}
+            onSendMessage={handleSendMessage}
+            onBack={handleBackToList}
+            onLoadOlder={() => selectedConversation && loadOlderMessages(selectedConversation.id)}
+            canLoadOlder={Boolean(selectedConversation && messagesHasMoreRef.current[selectedConversation.id])}
+            isLoadingOlder={isLoadingOlder}
+          />
         ) : (
           <EmptyChat />
         )}

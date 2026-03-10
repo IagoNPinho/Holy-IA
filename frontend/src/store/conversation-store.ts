@@ -26,6 +26,8 @@ export type Message = {
   mediaType?: string | null
   mediaUrl?: string | null
   mimeType?: string | null
+  mediaFilename?: string | null
+  whatsappMessageId?: string | null
 }
 
 type State = {
@@ -38,6 +40,7 @@ type State = {
   upsertConversation: (c: Conversation) => void
   setMessages: (conversationId: string, list: Message[]) => void
   addMessage: (message: Message) => void
+  addMessages: (conversationId: string, list: Message[], opts?: { prepend?: boolean }) => void
   selectConversation: (id: string) => void
   setTyping: (value: boolean) => void
 }
@@ -82,9 +85,27 @@ export const useConversationStore = create<State>((set, get) => ({
   addMessage: (message) =>
     set((state) => {
       const list = state.messages[message.conversationId] || []
-      const exists = list.some((m) => m.id === message.id)
+      const exists = list.some((m) =>
+        (message.whatsappMessageId && m.whatsappMessageId === message.whatsappMessageId) ||
+        m.id === message.id
+      )
       const updated = exists ? list : [...list, message]
       return { messages: { ...state.messages, [message.conversationId]: updated } }
+    }),
+  addMessages: (conversationId, list, opts) =>
+    set((state) => {
+      const current = state.messages[conversationId] || []
+      if (!list.length) return state
+      const merged = opts?.prepend ? [...list, ...current] : [...current, ...list]
+      const deduped: Message[] = []
+      const seen = new Set<string>()
+      for (const msg of merged) {
+        const key = msg.whatsappMessageId ? `wa:${msg.whatsappMessageId}` : `id:${msg.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        deduped.push(msg)
+      }
+      return { messages: { ...state.messages, [conversationId]: deduped } }
     }),
   selectConversation: (id) =>
     set((state) => {

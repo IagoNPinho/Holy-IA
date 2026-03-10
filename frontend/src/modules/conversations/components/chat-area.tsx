@@ -15,9 +15,19 @@ interface ChatAreaProps {
   onToggleAi: (enabled: boolean) => void
   onSendMessage: (content: string) => void
   onBack?: () => void
+  onLoadOlder?: () => void
+  canLoadOlder?: boolean
+  isLoadingOlder?: boolean
 }
 
-export function ChatArea({ onToggleAi, onSendMessage, onBack }: ChatAreaProps) {
+export function ChatArea({
+  onToggleAi,
+  onSendMessage,
+  onBack,
+  onLoadOlder,
+  canLoadOlder,
+  isLoadingOlder,
+}: ChatAreaProps) {
   const [inputValue, setInputValue] = useState("")
   const selectedConversation = useSelectedConversation()
   const messages = useMessagesForSelected()
@@ -89,7 +99,7 @@ export function ChatArea({ onToggleAi, onSendMessage, onBack }: ChatAreaProps) {
     }
     return (
       <a href={src} target="_blank" rel="noreferrer" className="text-xs underline">
-        Baixar arquivo
+        {message.mediaFilename || "Baixar arquivo"}
       </a>
     )
   }
@@ -149,6 +159,22 @@ export function ChatArea({ onToggleAi, onSendMessage, onBack }: ChatAreaProps) {
       <div className="flex-1 min-h-0">
         <Virtuoso
           data={messageMeta}
+          components={{
+            Header: () => (
+              canLoadOlder ? (
+                <div className="px-6 pt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onLoadOlder}
+                    disabled={isLoadingOlder}
+                  >
+                    {isLoadingOlder ? "Carregando..." : "Carregar mensagens antigas"}
+                  </Button>
+                </div>
+              ) : null
+            ),
+          }}
           itemContent={(_, item) => {
             const { message, showDate, dateLabel } = item
             const isOutgoing = message.sender === "user" || message.sender === "ai"

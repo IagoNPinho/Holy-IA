@@ -69,6 +69,8 @@ async function listMessages(req, res, next) {
         media_type,
         media_url,
         mime_type,
+        media_filename,
+        whatsapp_message_id,
         intent
       FROM messages
       WHERE conversation_id = ?

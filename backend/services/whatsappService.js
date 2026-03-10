@@ -250,6 +250,7 @@ async function saveMessage({
   mediaUrl,
   mimeType,
   whatsappMessageId,
+  mediaFilename,
 }) {
   const schema = await loadMessageSchema();
   const direction = fromMe ? "out" : "in";
@@ -257,8 +258,8 @@ async function saveMessage({
   if (schema.hasDirection && schema.hasFromMe && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, from_me, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -272,6 +273,7 @@ async function saveMessage({
         mediaUrl || null,
         mimeType || null,
         whatsappMessageId || null,
+        mediaFilename || null,
       ]
     );
     return result?.lastID;
@@ -280,8 +282,8 @@ async function saveMessage({
   if (schema.hasDirection && schema.hasMessageType) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, message_type, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -294,6 +296,7 @@ async function saveMessage({
         mediaUrl || null,
         mimeType || null,
         whatsappMessageId || null,
+        mediaFilename || null,
       ]
     );
     return result?.lastID;
@@ -302,8 +305,8 @@ async function saveMessage({
   if (schema.hasDirection) {
     const result = await run(
       `
-      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type, whatsapp_message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, body, timestamp, direction, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         conversationId,
@@ -315,6 +318,7 @@ async function saveMessage({
         mediaUrl || null,
         mimeType || null,
         whatsappMessageId || null,
+        mediaFilename || null,
       ]
     );
     return result?.lastID;
@@ -322,8 +326,8 @@ async function saveMessage({
 
   const result = await run(
     `
-    INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type, whatsapp_message_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (conversation_id, from_me, body, timestamp, intent, media_type, media_url, mime_type, whatsapp_message_id, media_filename)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       conversationId,
@@ -335,6 +339,7 @@ async function saveMessage({
       mediaUrl || null,
       mimeType || null,
       whatsappMessageId || null,
+      mediaFilename || null,
     ]
   );
   return result?.lastID;
@@ -426,6 +431,7 @@ async function saveIncomingMedia(message) {
     mediaType: message.type || "media",
     mimeType: media.mimetype || null,
     mediaUrl: `/uploads/${filename}`,
+    filename: media.filename || null,
   };
 }
 
@@ -519,6 +525,7 @@ async function handleIncomingMessage(message) {
       mediaUrl: media?.mediaUrl || null,
       mimeType: media?.mimeType || null,
       whatsappMessageId: messageId || null,
+      mediaFilename: media?.filename || null,
     });
     log("info", "inbound_message_persisted", {
       conversationId: conversation.id,
@@ -538,17 +545,19 @@ async function handleIncomingMessage(message) {
       {
         conversationId: conversation.id,
         contactId,
-        message: {
-          id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
-          conversationId: String(conversation.id),
-          content: bodyToStore || "",
-          sender: "contact",
-          timestamp,
-          messageType: "incoming",
-          mediaType: media?.mediaType || null,
-          mediaUrl: media?.mediaUrl || null,
-          mimeType: media?.mimeType || null,
-        },
+      message: {
+        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+        conversationId: String(conversation.id),
+        content: bodyToStore || "",
+        sender: "contact",
+        timestamp,
+        messageType: "incoming",
+        mediaType: media?.mediaType || null,
+        mediaUrl: media?.mediaUrl || null,
+        mimeType: media?.mimeType || null,
+        mediaFilename: media?.filename || null,
+        whatsappMessageId: messageId || null,
+      },
         conversation: snapshot
           ? {
               id: String(snapshot.id),
@@ -682,15 +691,17 @@ async function handleIncomingMessage(message) {
         contactId,
         message: {
           id: String(savedId || sentMessage?.id?._serialized || `${conversation.id}:${outTimestamp}`),
-            conversationId: String(conversation.id),
-            content: body,
-            sender: "ai",
-            timestamp: outTimestamp,
-            messageType: "ai",
-            mediaType: null,
-            mediaUrl: null,
-            mimeType: null,
-          },
+          conversationId: String(conversation.id),
+          content: body,
+          sender: "ai",
+          timestamp: outTimestamp,
+          messageType: "ai",
+          mediaType: null,
+          mediaUrl: null,
+          mimeType: null,
+          mediaFilename: null,
+          whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
+        },
           conversation: snapshot
             ? {
                 id: String(snapshot.id),
@@ -855,6 +866,7 @@ async function handleOutgoingMessage(message) {
       mediaUrl: null,
       mimeType: null,
       whatsappMessageId: messageId || null,
+      mediaFilename: null,
     });
     log("info", "outbound_linked_message_persisted", {
       conversationId: conversation.id,
@@ -884,6 +896,8 @@ async function handleOutgoingMessage(message) {
           mediaType,
           mediaUrl: null,
           mimeType: null,
+          mediaFilename: null,
+          whatsappMessageId: messageId || null,
         },
         conversation: snapshot
           ? {
@@ -1114,6 +1128,7 @@ async function sendManualMessage({ to, body }) {
     timestamp: outTimestamp,
     messageType: "manual",
     whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
+    mediaFilename: null,
   });
   log("info", "outbound_panel_message_persisted", {
     conversationId: convo.id,
@@ -1143,6 +1158,8 @@ async function sendManualMessage({ to, body }) {
         mediaType: null,
         mediaUrl: null,
         mimeType: null,
+        mediaFilename: null,
+        whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
       },
       conversation: snapshot
         ? {
