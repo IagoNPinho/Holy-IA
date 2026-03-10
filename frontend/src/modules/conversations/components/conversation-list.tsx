@@ -37,9 +37,22 @@ export function ConversationList({ isLoading }: ConversationListProps) {
   const selectConversation = useConversationStore((state) => state.selectConversation)
   const upsertConversation = useConversationStore((state) => state.upsertConversation)
 
+  const parseTimestamp = (value: string) => {
+    if (!value) return null
+    const asNumber = Number(value)
+    if (!Number.isNaN(asNumber) && asNumber > 0) {
+      return new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
+    }
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(value)) {
+      return new Date(value.replace(" ", "T") + "Z")
+    }
+    return new Date(value)
+  }
+
   const formatTimestamp = (value: string) => {
     if (!value) return ""
-    const date = new Date(value)
+    const date = parseTimestamp(value)
+    if (!date) return ""
     if (Number.isNaN(date.getTime())) return value
     return date.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit" })
   }
@@ -55,7 +68,7 @@ export function ConversationList({ isLoading }: ConversationListProps) {
 
   const getAlertLabel = (timestamp: string, unread: number, resolvedAt?: string | null) => {
     if (!timestamp || unread === 0 || resolvedAt) return null
-    const ts = new Date(timestamp).getTime()
+    const ts = parseTimestamp(timestamp)?.getTime() || NaN
     if (Number.isNaN(ts)) return null
     const hours = (Date.now() - ts) / 36e5
     if (hours >= 24) return "24h"

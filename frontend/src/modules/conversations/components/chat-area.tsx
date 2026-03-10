@@ -46,6 +46,9 @@ export function ChatArea({ onToggleAi, onSendMessage, onBack }: ChatAreaProps) {
     if (!Number.isNaN(asNumber) && asNumber > 0) {
       return new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
     }
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(value)) {
+      return new Date(value.replace(" ", "T") + "Z")
+    }
     return new Date(value)
   }
 

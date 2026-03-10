@@ -394,7 +394,7 @@ async function handleIncomingMessage(message) {
     if (message?.fromMe) {
       return;
     }
-    const rawContactId = message.from;
+    const rawContactId = message.fromMe ? message.to : message.from;
     if (
       rawContactId === "status@broadcast" ||
       rawContactId?.includes("@newsletter") ||
@@ -404,8 +404,9 @@ async function handleIncomingMessage(message) {
       return;
     }
     const normalizedContactId = normalizeContactId(rawContactId);
+    const contactId = normalizedContactId || rawContactId;
     const contact = await message.getContact();
-    const contactName = contact?.pushname || contact?.name || normalizedContactId || rawContactId;
+    const contactName = contact?.pushname || contact?.name || contactId;
 
     log("info", "incoming_message_raw", {
       from: rawContactId,
@@ -413,14 +414,15 @@ async function handleIncomingMessage(message) {
       id: message?.id?._serialized || message?.id?.id || null,
       type: message?.type,
       hasMedia: Boolean(message?.hasMedia),
+      contactId,
     });
 
     const existing = await findConversationByContactId(rawContactId, normalizedContactId);
-    const conversation = existing || (await ensureConversation(normalizedContactId || rawContactId, contactName));
-    await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
+    const conversation = existing || (await ensureConversation(contactId, contactName));
+    await ensureContact(conversation?.contact_id || contactId);
     const now = Date.now();
     const messageId = message?.id?.id || message?.id?._serialized;
-    const fallbackKey = `${conversation?.contact_id || normalizedContactId || rawContactId}:${message?.body || ""}:${message?.timestamp || ""}`;
+    const fallbackKey = `${conversation?.contact_id || contactId}:${message?.body || ""}:${message?.timestamp || ""}`;
     const dedupeKey = messageId ? `id:${messageId}` : `fallback:${fallbackKey}`;
     const last = processedMessageIds.get(dedupeKey) || processedMessageKeys.get(dedupeKey);
     if (last && now - last < 5 * 60 * 1000) {
@@ -629,8 +631,8 @@ async function handleOutgoingMessage(message) {
       processedMessageKeys.set(dedupeKey, now);
     }
 
-    const contact = await message.getContact().catch(() => null);
-    const contactName = contact?.pushname || contact?.name || rawContactId;
+    const chat = await message.getChat().catch(() => null);
+    const contactName = chat?.name || chat?.id?.user || rawContactId;
     const conversation = await ensureConversation(rawContactId, contactName);
     await ensureContact(rawContactId);
 
