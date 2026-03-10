@@ -117,6 +117,18 @@ async function migrate() {
   );
   await run(`CREATE INDEX IF NOT EXISTS idx_messages_intent ON messages(intent)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages(media_type)`);
+  await run(`
+    DELETE FROM messages
+    WHERE whatsapp_message_id IS NOT NULL
+      AND whatsapp_message_id != ''
+      AND id NOT IN (
+        SELECT MIN(id)
+        FROM messages
+        WHERE whatsapp_message_id IS NOT NULL
+          AND whatsapp_message_id != ''
+        GROUP BY whatsapp_message_id
+      )
+  `);
   await run(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_whatsapp_id ON messages(whatsapp_message_id)
      WHERE whatsapp_message_id IS NOT NULL AND whatsapp_message_id != ''`

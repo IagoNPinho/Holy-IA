@@ -116,6 +116,18 @@ function normalizeContactId(contactId) {
   return contactId;
 }
 
+function getPreferredContactName({ chat, contact, fallback }) {
+  return (
+    chat?.name ||
+    chat?.pushname ||
+    contact?.pushname ||
+    contact?.verifiedName ||
+    contact?.name ||
+    fallback ||
+    null
+  );
+}
+
 function getNumericContactId(contactId) {
   if (!contactId || typeof contactId !== "string") return null;
   const digits = contactId.replace(/\D/g, "");
@@ -543,8 +555,10 @@ async function handleIncomingMessage(message) {
     }
     const normalizedContactId = normalizeContactId(rawContactId);
     const contactId = normalizedContactId || rawContactId;
-    const contact = await message.getContact();
-    const contactName = contact?.pushname || contact?.name || contactId;
+      const chat = await message.getChat().catch(() => null);
+      const contact = await message.getContact();
+      const contactName =
+        getPreferredContactName({ chat, contact, fallback: contactId }) || contactId;
 
     log("info", "incoming_message_raw", {
       from: rawContactId,
@@ -1356,7 +1370,11 @@ async function syncRecentMessagesForConversation({
       const updatedAt = getMessageTimestampIso(newest);
       const lastMessage = newest.body || (newest.hasMedia ? getMediaPreviewLabel(newest.type || "media") : "");
       const preferredName =
-        chat.name || chat.pushname || chatContact?.pushname || chatContact?.name || null;
+        getPreferredContactName({
+          chat,
+          contact: chatContact,
+          fallback: resolved.resolvedId || resolved.normalizedContactId || contactId,
+        }) || null;
       await updateConversation({
         id: conversationId,
         name:
@@ -1420,13 +1438,11 @@ async function handleOutgoingMessage(message) {
       const chat = await message.getChat().catch(() => null);
       const chatContact = await chat?.getContact().catch(() => null);
       const contactName =
-        chat?.name ||
-        chat?.pushname ||
-        chatContact?.pushname ||
-        chatContact?.name ||
-        chat?.id?.user ||
-        normalizedContactId ||
-        rawContactId;
+        getPreferredContactName({
+          chat,
+          contact: chatContact,
+          fallback: chat?.id?.user || normalizedContactId || rawContactId,
+        }) || (chat?.id?.user || normalizedContactId || rawContactId);
     const existingConversation = await findConversationByContactId(rawContactId, normalizedContactId);
     const conversation = existingConversation || (await ensureConversation(normalizedContactId || rawContactId, contactName));
     await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
@@ -1857,7 +1873,14 @@ async function syncInitialChats(clientInstance) {
   const globalAiEnabled = await getAiEnabled();
   const aiEnabledValue = globalAiEnabled ? 1 : 0;
   const chats = await activeClient.getChats();
-  const directChats = chats.filter((chat) => !chat.isGroup);
+  const directChats = chats.filter((chat) => {
+    if (chat.isGroup) return false;
+    const chatId = chat?.id?._serialized || chat?.id?.user || chat?.id;
+    if (!chatId) return false;
+    if (chatId === "status@broadcast") return false;
+    if (chatId.includes("@newsletter")) return false;
+    return true;
+  });
   const sortedChats = [...directChats].sort((a, b) => {
     const at = a.timestamp || a.lastMessage?.timestamp || 0;
     const bt = b.timestamp || b.lastMessage?.timestamp || 0;
@@ -1869,7 +1892,8 @@ async function syncInitialChats(clientInstance) {
 
   for (const chat of topChats) {
     const contactId = chat.id?._serialized || chat.id?.user || chat.id;
-    const name = chat.name || chat.pushname || chat.id?.user || contactId;
+    const contact = await chat.getContact().catch(() => null);
+    const name = getPreferredContactName({ chat, contact, fallback: contactId }) || contactId;
     const timestamp = chat.timestamp || chat.lastMessage?.timestamp;
     const updatedAt = timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
     const lastMessage = chat.lastMessage?.body || "";
@@ -1927,4 +1951,3 @@ module.exports = {
   scheduleSend,
   syncInitialChats,
 };
-

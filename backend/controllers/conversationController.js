@@ -8,10 +8,10 @@ async function listConversations(req, res, next) {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 20, 100);
     const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
     console.info("conversations_query_params", { limit, offset });
-    const conversations = await all(
-      `
-      SELECT
-        c.id,
+      const conversations = await all(
+        `
+        SELECT
+          c.id,
           CASE
             WHEN c.contact_name IS NOT NULL AND c.contact_name != '' THEN c.contact_name
             WHEN c.name IS NOT NULL AND c.name != '' AND c.name != c.contact_id THEN c.name
@@ -21,35 +21,37 @@ async function listConversations(req, res, next) {
               'Contato sem nome'
             )
           END AS name,
-        COALESCE(c.ai_enabled, 1) AS ai_enabled,
-        COALESCE(c.unread_count, 0) AS unread_count,
-        c.resolved_at,
-        COALESCE(
-          c.last_message,
-          (
-            SELECT m.body
-            FROM messages m
-            WHERE m.conversation_id = c.id
-            ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
-            LIMIT 1
-          )
-        ) AS last_message,
-        COALESCE(
-          c.updated_at,
-          (
-            SELECT COALESCE(m.timestamp, m.created_at)
-            FROM messages m
-            WHERE m.conversation_id = c.id
-            ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
-            LIMIT 1
-          )
-        ) AS updated_at
-      FROM conversations c
-      ORDER BY updated_at IS NULL, strftime('%s', updated_at) DESC
-      LIMIT ? OFFSET ?
-      `,
-      [limit, offset]
-    );
+          COALESCE(c.ai_enabled, 1) AS ai_enabled,
+          COALESCE(c.unread_count, 0) AS unread_count,
+          c.resolved_at,
+          COALESCE(
+            c.last_message,
+            (
+              SELECT m.body
+              FROM messages m
+              WHERE m.conversation_id = c.id
+              ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
+              LIMIT 1
+            )
+          ) AS last_message,
+          COALESCE(
+            c.updated_at,
+            (
+              SELECT COALESCE(m.timestamp, m.created_at)
+              FROM messages m
+              WHERE m.conversation_id = c.id
+              ORDER BY COALESCE(m.timestamp, m.created_at, m.id) DESC
+              LIMIT 1
+            )
+          ) AS updated_at
+        FROM conversations c
+        WHERE c.contact_id != 'status@broadcast'
+          AND c.contact_id NOT LIKE '%@newsletter'
+        ORDER BY updated_at IS NULL, strftime('%s', updated_at) DESC
+        LIMIT ? OFFSET ?
+        `,
+        [limit, offset]
+      );
     console.info("conversations_query_result", { returned: conversations.length });
     res.json({ data: conversations });
   } catch (error) {
@@ -106,13 +108,13 @@ async function listMessages(req, res, next) {
       limit,
       before: before || null,
     });
-    const hasMoreDb = dbMessages.length > limit;
-    let rows = dbMessages.slice(0, limit);
-    let backfillAvailable = false;
-    let backfillExhausted = false;
-    let backfillAttempted = false;
+      const hasMoreDb = dbMessages.length > limit;
+      let rows = dbMessages.slice(0, limit);
+      let backfillAvailable = false;
+      let backfillExhausted = false;
+      let backfillAttempted = false;
 
-      if (before && rows.length === 0) {
+      if (before && !hasMoreDb) {
         backfillAttempted = true;
         if (!convo) {
           convo = await get(
@@ -127,12 +129,27 @@ async function listMessages(req, res, next) {
           beforeTimestamp: before,
           limit,
         });
-      rows = backfill.messages;
-      backfillAvailable = backfill.available;
-      backfillExhausted = backfill.exhausted;
-    } else if (before && !hasMoreDb) {
-      backfillAvailable = true;
-    }
+        backfillAvailable = backfill.available;
+        backfillExhausted = backfill.exhausted;
+        if (backfill.messages?.length) {
+          const existingIds = new Set(rows.map((row) => row.id).filter(Boolean));
+          const existingWhatsappIds = new Set(
+            rows.map((row) => row.whatsapp_message_id).filter(Boolean)
+          );
+          const filteredBackfill = backfill.messages.filter((msg) => {
+            if (msg.whatsapp_message_id) {
+              return !existingWhatsappIds.has(msg.whatsapp_message_id);
+            }
+            return !existingIds.has(msg.id);
+          });
+          rows = rows.concat(filteredBackfill);
+          if (rows.length > limit) {
+            rows = rows.slice(0, limit);
+          }
+        }
+      } else if (before) {
+        backfillAvailable = true;
+      }
     await run(
       `
       UPDATE conversations
