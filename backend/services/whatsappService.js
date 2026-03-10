@@ -69,14 +69,40 @@ async function ensureConversation(contactId, contactName) {
     );
   }
 
-  if (conversation && !conversation.name && contactName) {
-    await run("UPDATE conversations SET name = ?, updated_at = datetime('now') WHERE id = ?", [
-      contactName,
-      conversation.id,
-    ]);
-    conversation.name = contactName;
+  if (conversation && contactName) {
+    const shouldUpdateName =
+      !conversation.name || conversation.name === conversation.contact_id || conversation.name === "undefined";
+    if (shouldUpdateName) {
+      await run(
+        "UPDATE conversations SET name = ?, contact_name = ?, updated_at = datetime('now') WHERE id = ?",
+        [contactName, contactName, conversation.id]
+      );
+      conversation.name = contactName;
+    }
   }
 
+  return conversation;
+}
+
+function normalizeContactId(contactId) {
+  if (!contactId || typeof contactId !== "string") return contactId;
+  if (contactId.endsWith("@lid")) {
+    return contactId.replace(/@lid$/, "@c.us");
+  }
+  return contactId;
+}
+
+async function findConversationByContactId(rawContactId, normalizedContactId) {
+  let conversation = await get(
+    "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
+    [rawContactId]
+  );
+  if (!conversation && normalizedContactId && normalizedContactId !== rawContactId) {
+    conversation = await get(
+      "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
+      [normalizedContactId]
+    );
+  }
   return conversation;
 }
 
@@ -352,23 +378,33 @@ async function handleIncomingMessage(message) {
     if (message?.fromMe) {
       return;
     }
-    const contact = await message.getContact();
-    const contactId = message.from;
+    const rawContactId = message.from;
     if (
-      contactId === "status@broadcast" ||
-      contactId?.includes("@newsletter") ||
-      contactId?.includes("@g.us")
+      rawContactId === "status@broadcast" ||
+      rawContactId?.includes("@newsletter") ||
+      rawContactId?.includes("@g.us")
     ) {
-      log("info", "skip_broadcast_message", { contactId });
+      log("info", "skip_broadcast_message", { contactId: rawContactId });
       return;
     }
-    const contactName = contact?.pushname || contact?.name || contactId;
+    const normalizedContactId = normalizeContactId(rawContactId);
+    const contact = await message.getContact();
+    const contactName = contact?.pushname || contact?.name || normalizedContactId || rawContactId;
 
-    const conversation = await ensureConversation(contactId, contactName);
-    await ensureContact(contactId);
+    log("info", "incoming_message_raw", {
+      from: rawContactId,
+      to: message?.to,
+      id: message?.id?._serialized || message?.id?.id || null,
+      type: message?.type,
+      hasMedia: Boolean(message?.hasMedia),
+    });
+
+    const existing = await findConversationByContactId(rawContactId, normalizedContactId);
+    const conversation = existing || (await ensureConversation(normalizedContactId || rawContactId, contactName));
+    await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
     const now = Date.now();
     const messageId = message?.id?.id || message?.id?._serialized;
-    const fallbackKey = `${contactId}:${message?.body || ""}:${message?.timestamp || ""}`;
+    const fallbackKey = `${conversation?.contact_id || normalizedContactId || rawContactId}:${message?.body || ""}:${message?.timestamp || ""}`;
     const dedupeKey = messageId ? `id:${messageId}` : `fallback:${fallbackKey}`;
     const last = processedMessageIds.get(dedupeKey) || processedMessageKeys.get(dedupeKey);
     if (last && now - last < 5 * 60 * 1000) {
@@ -442,7 +478,7 @@ async function handleIncomingMessage(message) {
     });
     sendEvent("message_received", {
       conversationId: conversation.id,
-      contactId,
+      contactId: conversation?.contact_id || normalizedContactId || rawContactId,
     });
     sendEvent("conversation_updated", { conversationId: conversation.id });
 

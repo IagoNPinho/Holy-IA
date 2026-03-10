@@ -58,8 +58,6 @@ export function useWhatsAppConnection(): ConnectionState {
   })
 
   useEffect(() => {
-    // keep stable initial state on mount
-    setConnected(false)
     if (!hasBootstrapped) {
       refreshStatus(true).finally(() => setHasBootstrapped(true))
     }

@@ -76,15 +76,22 @@ export default function DashboardPage() {
     }
   }, [])
 
+  const formatContactName = useCallback((name: string | null) => {
+    const trimmed = (name || "").trim()
+    if (!trimmed) return "Contato sem nome"
+    const cleaned = trimmed.replace(/@c\.us$/i, "").replace(/@g\.us$/i, "")
+    return cleaned || "Contato sem nome"
+  }, [])
+
   const refreshConversations = useCallback(async (limitOverride?: number) => {
     const currentLength = listLengthRef.current || 0
-    const limit = Math.max(limitOverride || 20, currentLength)
+    const limit = Math.max(limitOverride || 50, currentLength || 50)
     const res = await request<{ data: ConversationApi[] }>(
       `/conversations?limit=${limit}&offset=0`
     )
     const mapped = res.data.map((item) => ({
       id: String(item.id),
-      contactName: item.name || "",
+      contactName: formatContactName(item.name),
       lastMessage: item.last_message || "",
       timestamp: item.updated_at || "",
       unread: item.unread_count || 0,
@@ -92,12 +99,12 @@ export default function DashboardPage() {
       resolvedAt: item.resolved_at || null,
     }))
     setConversations(mapped)
-  }, [setConversations])
+  }, [formatContactName, setConversations])
 
   const loadInitialConversations = useCallback(async () => {
     setIsLoadingConversations(true)
     try {
-      await refreshConversations(20)
+      await refreshConversations(50)
       setConversationsError(null)
     } catch (err) {
       setConversationsError("Não foi possível carregar as conversas. Verifique sua sessão.")
@@ -149,11 +156,11 @@ export default function DashboardPage() {
     setIsLoadingMore(true)
     try {
       const res = await request<{ data: ConversationApi[] }>(
-        `/conversations?limit=20&offset=${nextOffset}`
+        `/conversations?limit=50&offset=${nextOffset}`
       )
       const mapped = res.data.map((item) => ({
         id: String(item.id),
-        contactName: item.name || "",
+        contactName: formatContactName(item.name),
         lastMessage: item.last_message || "",
         timestamp: item.updated_at || "",
         unread: item.unread_count || 0,
