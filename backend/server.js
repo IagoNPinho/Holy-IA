@@ -119,9 +119,16 @@ app.use(followupsRouter);
 
 // Global error handler.
 // eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
+app.use((err, req, res, _next) => {
   log("error", "unhandled_error", {
     error: err?.message || "unknown_error",
+    errorStack: err?.stack || null,
+    method: req?.method || null,
+    path: req?.path || null,
+    conversationId: req?.params?.conversationId || req?.body?.conversationId || null,
+    messageId: req?.body?.messageId || req?.body?.id || null,
+    messageType: req?.body?.messageType || req?.body?.type || null,
+    resolvedChatId: err?.resolvedChatId || null,
   });
   res.status(500).json({ error: "Erro interno do servidor." });
 });

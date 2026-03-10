@@ -1049,7 +1049,7 @@ async function backfillConversationHistory({
   for (const msg of filtered) {
     const whatsappId = msg?.id?._serialized || msg?.id?.id || null;
     const ts = getMessageTimestampIso(msg);
-    const mediaType = msg?.hasMedia ? msg?.type || "media" : null;
+    let mediaType = msg?.hasMedia ? msg?.type || "media" : null;
     const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
 
     if (whatsappId) {
@@ -1224,7 +1224,7 @@ async function syncRecentMessagesForConversation({
     const whatsappId = msg?.id?._serialized || msg?.id?.id || null;
     const ts = getMessageTimestampIso(msg);
     const fromMe = Boolean(msg.fromMe);
-    const mediaType = msg?.hasMedia ? msg?.type || "media" : null;
+    let mediaType = msg?.hasMedia ? msg?.type || "media" : null;
     const bodyToStore = msg.body || (mediaType ? getMediaPreviewLabel(mediaType) : "");
 
     if (whatsappId) {
