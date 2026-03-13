@@ -153,8 +153,9 @@ async function sendManual(req, res, next) {
   try {
     const { id } = req.params;
     const { body } = req.body || {};
-    if (!body || typeof body !== "string") {
-      return res.status(400).json({ error: "body is required" });
+    const text = typeof body === "string";
+    if (!body || text !== true) {
+      return res.status(400).json({ error: 'body is required ${typeof body}' });
     }
     const conv = await get(
       `
@@ -170,7 +171,7 @@ async function sendManual(req, res, next) {
     const savedId = await persistOutboundMessage({
       conversationId: conv.id,
       contactId: conv.contact_id,
-      text: body,
+      text: body.,
       messageType: "text",
       status: "queued",
     });
