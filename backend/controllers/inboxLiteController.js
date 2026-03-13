@@ -152,10 +152,16 @@ async function getMessages(req, res, next) {
 async function sendManual(req, res, next) {
   try {
     const { id } = req.params;
-    const { body } = req.body || {};
-    if (!body || typeof body !== "string") {
-      return res.status(400).json({ error: "body is required ${typeof body}" });
+
+    const messageBody =
+      typeof req.body === "string"
+        ? req.body
+        : req.body?.body || req.body?.text || req.body?.content || "";
+
+    if (!messageBody || typeof messageBody !== "string") {
+      return res.status(400).json({ error: "message body is required" });
     }
+
     const conv = await get(
       `
       SELECT c.id, c.contact_id, co.phone
@@ -165,12 +171,15 @@ async function sendManual(req, res, next) {
       `,
       [id]
     );
-    if (!conv) return res.status(404).json({ error: "conversation not found" });
+
+    if (!conv) {
+      return res.status(404).json({ error: "conversation not found" });
+    }
 
     const savedId = await persistOutboundMessage({
       conversationId: conv.id,
       contactId: conv.contact_id,
-      text: body.,
+      text: messageBody,
       messageType: "text",
       status: "queued",
     });
@@ -183,7 +192,7 @@ async function sendManual(req, res, next) {
         message: {
           id: savedId,
           conversationId: conv.id,
-          content: body,
+          content: messageBody,
           sender: "user",
           timestamp: new Date().toISOString(),
           messageType: "manual",
@@ -191,12 +200,13 @@ async function sendManual(req, res, next) {
       },
       "sse_emit_message_sent"
     );
+
     emitSse(
       "conversation_updated",
       {
         conversationId: conv.id,
         contactId: conv.contact_id,
-        lastMessage: body,
+        lastMessage: messageBody,
         updatedAt: new Date().toISOString(),
       },
       "sse_emit_conversation_updated"
