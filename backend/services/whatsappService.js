@@ -116,15 +116,47 @@ function normalizeContactId(contactId) {
   return contactId;
 }
 
+async function resolveContactMetadata(contactId) {
+  if (!client || !contactId) return { contact: null, formattedNumber: null };
+  const normalized = normalizeContactId(contactId);
+  let contact = null;
+  if (typeof client.getContactById === "function") {
+    contact = await client.getContactById(normalized || contactId).catch(() => null);
+    if (!contact && normalized !== contactId) {
+      contact = await client.getContactById(contactId).catch(() => null);
+    }
+  }
+
+  let formattedNumber = null;
+  if (typeof client.getContactLidAndPhone === "function" && contactId.endsWith("@lid")) {
+    const mapping = await client.getContactLidAndPhone([contactId]).catch(() => null);
+    const entry = mapping?.[contactId] || mapping?.[0];
+    const phone = entry?.phone || entry?.number || null;
+    if (phone && typeof client.getFormattedNumber === "function") {
+      formattedNumber = await client.getFormattedNumber(phone).catch(() => null);
+    }
+  }
+
+  if (!formattedNumber && typeof client.getFormattedNumber === "function") {
+    const digits = (normalized || contactId).replace(/\D/g, "");
+    if (digits) {
+      formattedNumber = await client.getFormattedNumber(digits).catch(() => null);
+    }
+  }
+
+  return { contact, formattedNumber };
+}
+
 function getPreferredContactName({ chat, contact, fallback }) {
   return (
-    chat?.name ||
-    chat?.pushname ||
+    contact?.name ||
     contact?.pushname ||
+    contact?.shortName ||
     contact?.verifiedName ||
     contact?.businessName ||
     contact?.businessProfile?.name ||
-    contact?.name ||
+    chat?.name ||
+    chat?.pushname ||
     fallback ||
     null
   );
@@ -559,8 +591,15 @@ async function handleIncomingMessage(message) {
     const contactId = normalizedContactId || rawContactId;
       const chat = await message.getChat().catch(() => null);
       const contact = await message.getContact();
+      const meta = await resolveContactMetadata(contactId);
       const contactName =
-        getPreferredContactName({ chat, contact, fallback: contactId }) || contactId;
+        getPreferredContactName({
+          chat,
+          contact: contact || meta.contact,
+          fallback: meta.formattedNumber || contactId,
+        }) ||
+        meta.formattedNumber ||
+        contactId;
 
     log("info", "incoming_message_raw", {
       from: rawContactId,
@@ -965,6 +1004,7 @@ async function backfillConversationHistory({
 
   let chat = resolved.chat;
   const beforeMs = beforeTimestamp ? new Date(beforeTimestamp).getTime() : null;
+  let syncAttempted = false;
   const initialLimit = Math.max(limit, 50);
   let lastFetchLimit = initialLimit;
   let fetched = await chat.fetchMessages({ limit: initialLimit });
@@ -998,6 +1038,58 @@ async function backfillConversationHistory({
       const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
       return ts < beforeMs;
     });
+  }
+
+  if (!filtered.length) {
+    if (typeof client?.syncHistory === "function" && resolved.resolvedId) {
+      let syncSucceeded = false;
+      log("info", "history_remote_backfill_sync", {
+        conversationId,
+        dbContactId: contactId || null,
+        normalizedContactId: normalizedContactId || null,
+        resolvedChatId: resolved.resolvedId,
+        resolvedBy: resolved.resolvedBy,
+        before: beforeTimestamp || null,
+        limit: lastFetchLimit,
+      });
+      try {
+        await client.syncHistory(resolved.resolvedId);
+        syncSucceeded = true;
+      } catch (error) {
+        log("warn", "history_remote_backfill_sync_failed", {
+          conversationId,
+          resolvedChatId: resolved.resolvedId,
+          error: error?.message || "sync_failed",
+        });
+      }
+      syncAttempted = syncSucceeded;
+    }
+
+    if (syncAttempted) {
+      const retryLimit = Math.max(limit * 4, 200);
+      lastFetchLimit = retryLimit;
+      log("info", "history_remote_backfill_retry", {
+        conversationId,
+        dbContactId: contactId || null,
+        normalizedContactId: normalizedContactId || null,
+        resolvedChatId: resolved.resolvedId,
+        resolvedBy: resolved.resolvedBy,
+        before: beforeTimestamp || null,
+        limit: retryLimit,
+        fetchedCount: 0,
+        oldestFetchedTimestamp: null,
+        newestFetchedTimestamp: null,
+        oldestBodyPreview: null,
+        newestBodyPreview: null,
+        exhausted: false,
+      });
+      fetched = await chat.fetchMessages({ limit: retryLimit });
+      filtered = fetched.filter((msg) => {
+        if (!beforeMs) return true;
+        const ts = msg?.timestamp ? msg.timestamp * 1000 : 0;
+        return ts < beforeMs;
+      });
+    }
   }
 
   if (!filtered.length) {
@@ -1036,6 +1128,8 @@ async function backfillConversationHistory({
   }
 
   if (!filtered.length) {
+    const exhausted = Boolean(syncAttempted);
+    const reason = exhausted ? "no_older_messages_after_sync" : "no_older_messages_without_sync";
     log("info", "history_remote_backfill_exhausted", {
       conversationId,
       dbContactId: contactId || null,
@@ -1044,13 +1138,13 @@ async function backfillConversationHistory({
       resolvedBy: resolved.resolvedBy,
       before: beforeTimestamp || null,
       limit: lastFetchLimit,
-      reason: "no_older_messages",
+      reason,
       fetchedCount: 0,
       oldestFetchedTimestamp: null,
       newestFetchedTimestamp: null,
       oldestBodyPreview: null,
       newestBodyPreview: null,
-      exhausted: true,
+      exhausted,
     });
     log("info", "history_remote_backfill_result", {
       conversationId,
@@ -1065,9 +1159,9 @@ async function backfillConversationHistory({
       newestFetchedTimestamp: null,
       oldestBodyPreview: null,
       newestBodyPreview: null,
-      exhausted: true,
+      exhausted,
     });
-    return { messages: [], exhausted: true, available: true };
+    return { messages: [], exhausted, available: true };
   }
 
   const persisted = [];
@@ -1249,6 +1343,7 @@ async function syncRecentMessagesForConversation({
 
   const chat = resolved.chat;
   const chatContact = await chat.getContact().catch(() => null);
+  const chatMeta = await resolveContactMetadata(resolved.resolvedId || contactId);
   const fetched = await chat.fetchMessages({ limit });
   const sorted = [...fetched].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const oldestTimestamp = sorted[0] ? getMessageTimestampIso(sorted[0]) : null;
@@ -1374,8 +1469,8 @@ async function syncRecentMessagesForConversation({
       const preferredName =
         getPreferredContactName({
           chat,
-          contact: chatContact,
-          fallback: resolved.resolvedId || resolved.normalizedContactId || contactId,
+          contact: chatContact || chatMeta.contact,
+          fallback: chatMeta.formattedNumber || resolved.resolvedId || resolved.normalizedContactId || contactId,
         }) || null;
       await updateConversation({
         id: conversationId,
@@ -1439,12 +1534,17 @@ async function handleOutgoingMessage(message) {
     }
       const chat = await message.getChat().catch(() => null);
       const chatContact = await chat?.getContact().catch(() => null);
+      const meta = await resolveContactMetadata(normalizedContactId || rawContactId);
       const contactName =
         getPreferredContactName({
           chat,
-          contact: chatContact,
-          fallback: chat?.id?.user || normalizedContactId || rawContactId,
-        }) || (chat?.id?.user || normalizedContactId || rawContactId);
+          contact: chatContact || meta.contact,
+          fallback: meta.formattedNumber || chat?.id?.user || normalizedContactId || rawContactId,
+        }) ||
+        meta.formattedNumber ||
+        chat?.id?.user ||
+        normalizedContactId ||
+        rawContactId;
     const existingConversation = await findConversationByContactId(rawContactId, normalizedContactId);
     const conversation = existingConversation || (await ensureConversation(normalizedContactId || rawContactId, contactName));
     await ensureContact(conversation?.contact_id || normalizedContactId || rawContactId);
@@ -1892,10 +1992,16 @@ async function syncInitialChats(clientInstance) {
   const hydrateChats = topChats.slice(0, 20);
   let chatsSaved = 0;
 
-  for (const chat of topChats) {
-    const contactId = chat.id?._serialized || chat.id?.user || chat.id;
-    const contact = await chat.getContact().catch(() => null);
-    const name = getPreferredContactName({ chat, contact, fallback: contactId }) || contactId;
+    for (const chat of topChats) {
+      const contactId = chat.id?._serialized || chat.id?.user || chat.id;
+      const contact = await chat.getContact().catch(() => null);
+      const meta = await resolveContactMetadata(contactId);
+      const name =
+        getPreferredContactName({
+          chat,
+          contact: contact || meta.contact,
+          fallback: meta.formattedNumber || contactId,
+        }) || meta.formattedNumber || contactId;
     const timestamp = chat.timestamp || chat.lastMessage?.timestamp;
     const updatedAt = timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString();
     const lastMessage = chat.lastMessage?.body || "";

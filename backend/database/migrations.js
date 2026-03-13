@@ -212,6 +212,91 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_ai_logs_created_at ON ai_logs(created_at)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC)`);
 
+  // Inbox Lite tables (isolated from legacy schema)
+  await run(`
+    CREATE TABLE IF NOT EXISTS contacts_lite (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL UNIQUE,
+      name TEXT,
+      avatar_url TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_contacts_lite_phone ON contacts_lite(phone)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS conversations_lite (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      external_chat_id TEXT,
+      contact_id INTEGER NOT NULL,
+      instance_id TEXT,
+      channel TEXT,
+      status TEXT,
+      ai_enabled INTEGER NOT NULL DEFAULT 1,
+      last_message_at TEXT,
+      last_message_preview TEXT,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (contact_id) REFERENCES contacts_lite(id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_conversations_lite_external_chat ON conversations_lite(external_chat_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_conversations_lite_contact ON conversations_lite(contact_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_conversations_lite_last_message_at ON conversations_lite(last_message_at DESC)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS messages_lite (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      external_message_id TEXT UNIQUE,
+      conversation_id INTEGER NOT NULL,
+      contact_id INTEGER,
+      direction TEXT NOT NULL,
+      sender_type TEXT,
+      message_type TEXT,
+      text_content TEXT,
+      media_id INTEGER,
+      status TEXT,
+      external_timestamp TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (conversation_id) REFERENCES conversations_lite(id),
+      FOREIGN KEY (contact_id) REFERENCES contacts_lite(id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_lite_conversation ON messages_lite(conversation_id, created_at)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_lite_external_id ON messages_lite(external_message_id)`);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS media_assets_lite (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER,
+      storage_provider TEXT,
+      storage_path TEXT,
+      public_url TEXT,
+      mime_type TEXT,
+      file_size INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (message_id) REFERENCES messages_lite(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS conversation_ai_state_lite (
+      conversation_id INTEGER PRIMARY KEY,
+      ai_enabled INTEGER NOT NULL DEFAULT 1,
+      current_intent TEXT,
+      intent_confidence REAL,
+      lead_temperature REAL,
+      ai_message_count INTEGER DEFAULT 0,
+      customer_message_count INTEGER DEFAULT 0,
+      needs_human INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (conversation_id) REFERENCES conversations_lite(id)
+    )
+  `);
+
   await run(`
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

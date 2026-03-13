@@ -25,6 +25,7 @@ const { authRouter } = require("./routes/auth");
 const { healthRouter } = require("./routes/health");
 const { followupsRouter } = require("./routes/followups");
 const { authRequired } = require("./middleware/auth");
+const { inboxLitePublicRouter, inboxLitePrivateRouter } = require("./routes/inboxLite");
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use((req, _res, next) => {
 });
 
 app.use(healthRouter);
+app.use(inboxLitePublicRouter);
 
 function sseAuthRequired(req, res, next) {
   const header = req.headers.authorization || "";
@@ -108,6 +110,7 @@ app.get("/events", sseAuthRequired, (req, res) => {
 
 app.use(authRouter);
 app.use(authRequired);
+app.use(inboxLitePrivateRouter);
 app.use(conversationsRouter);
 app.use(settingsRouter);
 app.use(toggleRouter);
