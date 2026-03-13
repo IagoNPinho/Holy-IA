@@ -153,9 +153,8 @@ async function sendManual(req, res, next) {
   try {
     const { id } = req.params;
     const { body } = req.body || {};
-    const text = typeof body === "string";
-    if (!body || text !== true) {
-      return res.status(400).json({ error: 'body is required ${typeof body}' });
+    if (!body || typeof body !== "string") {
+      return res.status(400).json({ error: "body is required ${typeof body}" });
     }
     const conv = await get(
       `
