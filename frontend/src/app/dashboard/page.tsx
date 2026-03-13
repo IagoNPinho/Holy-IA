@@ -14,27 +14,23 @@ import { useConversationList, useConversationStore, useSelectedConversation, use
 import type { Message } from "@/store/conversation-store"
 
 type ConversationApi = {
-  id: number
-  name: string | null
-  ai_enabled: number | null
-  unread_count?: number | null
-  last_message: string | null
-  updated_at: string | null
-  resolved_at?: string | null
+  id: number | string
+  contactName: string
+  lastMessage: string
+  timestamp: string
+  unread: number
+  aiEnabled: boolean
+  status?: string
 }
 
 type MessageApi = {
-  id: number
-  from_me?: number
-  body: string
+  id: number | string
+  conversationId: number | string
+  content: string
+  sender: "user" | "contact" | "ai"
   timestamp: string
-  message_type?: "incoming" | "manual" | "ai" | null
-  media_type?: string | null
-  media_url?: string | null
-  mime_type?: string | null
-  media_filename?: string | null
-  whatsapp_message_id?: string | null
-  intent?: string | null
+  messageType?: "incoming" | "manual" | "ai" | null
+  status?: string | null
 }
 
 export default function DashboardPage() {
@@ -103,16 +99,17 @@ export default function DashboardPage() {
     const currentLength = listLengthRef.current || 0
     const limit = Math.max(limitOverride || 50, currentLength || 50)
     const res = await request<{ data: ConversationApi[] }>(
-      `/conversations?limit=${limit}&offset=0`
+      `/api/conversations?limit=${limit}&offset=0`
     )
     const mapped = res.data.map((item) => ({
       id: String(item.id),
-      contactName: formatContactName(item.name),
-      lastMessage: item.last_message || "",
-      timestamp: item.updated_at || "",
-      unread: item.unread_count || 0,
-      aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-      resolvedAt: item.resolved_at || null,
+      contactName: formatContactName(item.contactName),
+      lastMessage: item.lastMessage || "",
+      timestamp: item.timestamp || "",
+      unread: item.unread || 0,
+      aiEnabled: item.aiEnabled ?? true,
+      resolvedAt: null,
+      status: item.status,
     }))
     setConversations(mapped)
   }, [formatContactName, setConversations])
@@ -172,16 +169,17 @@ export default function DashboardPage() {
     setIsLoadingMore(true)
     try {
       const res = await request<{ data: ConversationApi[] }>(
-        `/conversations?limit=50&offset=${nextOffset}`
+        `/api/conversations?limit=50&offset=${nextOffset}`
       )
       const mapped = res.data.map((item) => ({
         id: String(item.id),
-        contactName: formatContactName(item.name),
-        lastMessage: item.last_message || "",
-        timestamp: item.updated_at || "",
-        unread: item.unread_count || 0,
-        aiEnabled: item.ai_enabled === null || item.ai_enabled === undefined ? true : Boolean(item.ai_enabled),
-        resolvedAt: item.resolved_at || null,
+        contactName: formatContactName(item.contactName),
+        lastMessage: item.lastMessage || "",
+        timestamp: item.timestamp || "",
+        unread: item.unread || 0,
+        aiEnabled: item.aiEnabled ?? true,
+        resolvedAt: null,
+        status: item.status,
       }))
       setConversations([...conversationList, ...mapped])
     } catch (err) {
@@ -195,93 +193,37 @@ export default function DashboardPage() {
     console.debug("[CHAT_FETCH] refreshMessages called", { conversationId, reason })
     const res = await request<{
       data: MessageApi[]
-      meta?: { hasMoreDb?: boolean; backfillAvailable?: boolean; backfillExhausted?: boolean; oldestCursor?: string | null }
-    }>(`/messages/${conversationId}?limit=${messagesLimit}`)
+    }>(`/api/conversations/${conversationId}/messages?limit=${messagesLimit}`)
     const mapped: Message[] = res.data
       .slice()
       .reverse()
       .map((item) => ({
         id: String(item.id),
         conversationId,
-        content: item.body,
-        sender: (() => {
-          if (item.message_type === "ai") return "ai"
-          if (item.message_type === "manual") return "user"
-          if (item.message_type === "incoming") return "contact"
-          return item.from_me ? "user" : "contact"
-        })(),
+        content: item.content || "",
+        sender: item.sender || "contact",
         timestamp: item.timestamp,
-        messageType: item.message_type || (item.from_me ? "manual" : "incoming"),
-        mediaType: item.media_type || null,
-        mediaUrl: item.media_url || null,
-        mimeType: item.mime_type || null,
-        mediaFilename: item.media_filename || null,
-        whatsappMessageId: item.whatsapp_message_id || null,
+        messageType: item.messageType || (item.sender === "ai" ? "ai" : "incoming"),
+        mediaType: null,
+        mediaUrl: null,
+        mimeType: null,
+        mediaFilename: null,
+        whatsappMessageId: null,
       }))
     setMessages(conversationId, mapped)
     const meta = {
-      oldestCursor: res.meta?.oldestCursor ?? (mapped.length ? mapped[0].timestamp : null),
-      hasMoreDb: res.meta?.hasMoreDb ?? res.data.length >= messagesLimit,
-      backfillAvailable: res.meta?.backfillAvailable ?? false,
-      backfillExhausted: res.meta?.backfillExhausted ?? false,
+      oldestCursor: mapped.length ? mapped[0].timestamp : null,
+      hasMoreDb: false,
+      backfillAvailable: false,
+      backfillExhausted: true,
     }
     setMessageMeta(conversationId, meta)
     console.debug("[HISTORY] response meta", { conversationId, ...meta })
   }, [messagesLimit, setMessageMeta, setMessages])
 
-  const loadOlderMessages = useCallback(async (conversationId: string) => {
-    const cursor = selectedMeta?.oldestCursor || null
-    const status = selectedMeta
-    if (!cursor && !(status?.backfillAvailable && !status?.backfillExhausted)) return
-    if (isLoadingOlder) return
-    setIsLoadingOlder(true)
-    try {
-      console.debug("[HISTORY] load older clicked", { conversationId, cursor })
-      const res = await request<{
-        data: MessageApi[]
-        meta?: { hasMoreDb?: boolean; backfillAvailable?: boolean; backfillExhausted?: boolean; oldestCursor?: string | null }
-      }>(
-        `/messages/${conversationId}?limit=${messagesLimit}&before=${encodeURIComponent(cursor || "")}`
-      )
-      const mapped: Message[] = res.data
-        .slice()
-        .reverse()
-        .map((item) => ({
-          id: String(item.id),
-          conversationId,
-          content: item.body,
-          sender: (() => {
-            if (item.message_type === "ai") return "ai"
-            if (item.message_type === "manual") return "user"
-            if (item.message_type === "incoming") return "contact"
-            return item.from_me ? "user" : "contact"
-          })(),
-          timestamp: item.timestamp,
-          messageType: item.message_type || (item.from_me ? "manual" : "incoming"),
-          mediaType: item.media_type || null,
-          mediaUrl: item.media_url || null,
-          mimeType: item.mime_type || null,
-          mediaFilename: item.media_filename || null,
-          whatsappMessageId: item.whatsapp_message_id || null,
-        }))
-      addMessages(conversationId, mapped, { prepend: true })
-      const meta = {
-        oldestCursor: res.meta?.oldestCursor ?? (mapped.length ? mapped[0].timestamp : cursor),
-        hasMoreDb: res.meta?.hasMoreDb ?? res.data.length >= messagesLimit,
-        backfillAvailable: res.meta?.backfillAvailable ?? status?.backfillAvailable ?? false,
-        backfillExhausted: res.meta?.backfillExhausted ?? status?.backfillExhausted ?? false,
-      }
-      setMessageMeta(conversationId, meta)
-      const canLoadOlder =
-        meta.hasMoreDb || (meta.backfillAvailable && !meta.backfillExhausted)
-      console.debug("[HISTORY] response meta", { conversationId, ...meta })
-      console.debug("[HISTORY] canLoadOlder recalculated", { conversationId, canLoadOlder })
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setIsLoadingOlder(false)
-    }
-  }, [addMessages, isLoadingOlder, messagesLimit, selectedMeta, setMessageMeta])
+  const loadOlderMessages = useCallback(async (_conversationId: string) => {
+    return
+  }, [])
 
   useEffect(() => {
     let isActive = true
@@ -410,9 +352,9 @@ export default function DashboardPage() {
     if (!selectedConversation) return
     try {
       const res = await request<{ ok: boolean; aiEnabled: boolean }>(
-        `/conversations/${selectedConversation.id}/ai-toggle`,
+        `/api/conversations/${selectedConversation.id}/ai-toggle`,
         {
-          method: "PATCH",
+          method: "POST",
           body: JSON.stringify({ enabled }),
         }
       )
@@ -425,9 +367,9 @@ export default function DashboardPage() {
   const handleSendMessage = async (content: string) => {
     if (!selectedConversation) return
     try {
-      await request<{ ok: boolean }>("/messages/send", {
+      await request<{ ok: boolean }>(`/api/conversations/${selectedConversation.id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ conversationId: selectedConversation.id, body: content }),
+        body: JSON.stringify({ body: content }),
       })
       console.debug("[CHAT_FETCH] skip refreshMessages after send", { conversationId: selectedConversation.id })
     } catch (err) {
