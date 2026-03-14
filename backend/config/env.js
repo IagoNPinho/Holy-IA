@@ -30,6 +30,7 @@ const env = {
   JWT_SECRET: process.env.JWT_SECRET || "holy-ia-secret",
   HUMAN_BASE_DELAY_MS: Number(process.env.HUMAN_BASE_DELAY_MS || 1500),
   HUMAN_SPLIT_DELAY_MS: Number(process.env.HUMAN_SPLIT_DELAY_MS || 600),
+  INBOX_LITE_MODE: process.env.INBOX_LITE_MODE === "true",
 };
 
 const groqApiKey = env.GROQ_API_KEY;

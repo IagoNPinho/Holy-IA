@@ -4,7 +4,7 @@
 Phase 3 - Frontend Inbox Lite rewiring to new endpoints
 
 ## Current Phase
-Phase 1.1 - Manual send route stabilization
+Phase 1.2 - Inbox Lite stabilization and legacy runtime isolation
 
 ## Next Phase
 Phase 2 - n8n Send Integration
@@ -14,7 +14,10 @@ Phase 2 - n8n Send Integration
 - repeated inbound messages for the same `externalChatId` reuse the same `conversationId`
 
 ## Current Focus
-Validate manual send persistence and realtime updates from Inbox Lite endpoints.
+Disable legacy whatsapp-web.js runtime noise while keeping Inbox Lite stable.
 
 ## Current Blocker Fixed
 - `POST /api/conversations/:id/messages` failing due to missing db helper import
+
+## Legacy Runtime Isolation
+Legacy whatsapp-web.js runtime is now gated behind `INBOX_LITE_MODE=true`.

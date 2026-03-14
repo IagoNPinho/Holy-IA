@@ -114,7 +114,9 @@ app.use(inboxLitePrivateRouter);
 app.use(conversationsRouter);
 app.use(settingsRouter);
 app.use(toggleRouter);
-app.use(whatsappRouter);
+if (!env.INBOX_LITE_MODE) {
+  app.use(whatsappRouter);
+}
 app.use(aiRouter);
 app.use(debugRouter);
 app.use(metricsRouter);
@@ -139,8 +141,10 @@ app.use((err, req, res, _next) => {
 async function bootstrap() {
   try {
     await migrate();
-    await initWhatsappClient();
-    await loadPendingFollowups();
+    if (!env.INBOX_LITE_MODE) {
+      await initWhatsappClient();
+      await loadPendingFollowups();
+    }
 
     app.listen(env.PORT, () => {
       log("info", "server_started", { port: env.PORT });
