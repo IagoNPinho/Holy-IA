@@ -1,4 +1,5 @@
 const { sendEvent } = require("../services/sseService");
+const { get } = require("../database/db");
 const {
   normalizePhone,
   upsertContact,
