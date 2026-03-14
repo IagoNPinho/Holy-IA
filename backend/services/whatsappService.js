@@ -74,6 +74,10 @@ function emitSse(type, payload, logName) {
   return result;
 }
 
+function setStatus(status) {
+  connectionStatus = status;
+}
+
 async function ensureConversation(contactId, contactName) {
   let conversation = await get(
     "SELECT id, contact_id, name, ai_enabled FROM conversations WHERE contact_id = ?",
@@ -2051,6 +2055,7 @@ module.exports = {
   getLatestQr,
   getConnectionStatus,
   getStatus,
+  setStatus,
   disconnect,
   sendManualMessage,
   backfillConversationHistory,

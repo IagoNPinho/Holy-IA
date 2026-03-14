@@ -4,7 +4,7 @@
 Phase 3 - Frontend Inbox Lite rewiring to new endpoints
 
 ## Current Phase
-Phase 1.2 - Inbox Lite stabilization and legacy runtime isolation
+Phase 4.1 - Inbox Lite UI cleanup (remove legacy WhatsApp polling/UI)
 
 ## Next Phase
 Phase 2 - n8n Send Integration
@@ -21,3 +21,6 @@ Disable legacy whatsapp-web.js runtime noise while keeping Inbox Lite stable.
 
 ## Legacy Runtime Isolation
 Legacy whatsapp-web.js runtime is now gated behind `INBOX_LITE_MODE=true`.
+
+## Inbox Lite Mode Flag
+- `INBOX_LITE_MODE=true` disables whatsapp-web.js startup and returns safe responses for `/whatsapp/status` and `/whatsapp/qr`.

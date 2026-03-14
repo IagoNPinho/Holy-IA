@@ -7,16 +7,23 @@ const {
   syncInitialChats,
 } = require("../services/whatsappService");
 const { getConversationCount } = require("../database/db");
+const { env } = require("../config/env");
 
 async function getQr(_req, res) {
+  if (env.INBOX_LITE_MODE) {
+    return res.json({ qr: null });
+  }
   const qr = getLatestQr();
   if (!qr) {
-    return res.status(404).json({ error: "QR ainda não disponivel." });
+    return res.status(404).json({ error: "QR ainda nÃ£o disponivel." });
   }
   return res.json({ qr });
 }
 
 async function getStatus(_req, res) {
+  if (env.INBOX_LITE_MODE) {
+    return res.json({ status: "disabled" });
+  }
   return res.json({ status: getWhatsappStatus() });
 }
 

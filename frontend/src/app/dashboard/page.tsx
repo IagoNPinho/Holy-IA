@@ -7,8 +7,6 @@ import { ChatArea } from "@/modules/conversations/components/chat-area"
 import { EmptyChat } from "@/modules/conversations/components/empty-chat"
 import { Button } from "@/components/ui/button"
 import { request } from "@/services/api"
-import { useWhatsAppConnection } from "@/hooks/use-whatsapp-connection"
-import { WhatsAppConnector } from "@/modules/whatsapp/components/whatsapp-connector"
 import { useEvents } from "@/hooks/use-events"
 import { useConversationList, useConversationStore, useSelectedConversation, useMessageMetaForSelected } from "@/store/conversation-store"
 import type { Message } from "@/store/conversation-store"
@@ -53,7 +51,7 @@ export default function DashboardPage() {
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false)
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false)
   const [mobileView, setMobileView] = useState<"list" | "chat">("list")
-  const { qr, connected } = useWhatsAppConnection()
+  const connected = true
   const messagesLimit = 50
 
   useEffect(() => {
@@ -61,23 +59,7 @@ export default function DashboardPage() {
   }, [conversationList.length])
 
   useEffect(() => {
-    let isActive = true
-    const loadStatuses = async () => {
-      try {
-        const aiResult = await request<{ enabled: boolean }>("/ai/status")
-        if (!isActive) return
-        setAiEnabled(aiResult.enabled)
-      } catch (err) {
-        console.error(err)
-      }
-    }
-
-    loadStatuses()
-    const interval = setInterval(loadStatuses, 15000)
-    return () => {
-      isActive = false
-      clearInterval(interval)
-    }
+    setAiEnabled(true)
   }, [])
 
   const formatContactName = useCallback((name: string | null) => {
@@ -426,11 +408,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {!connected && (
-          <div className="px-6 py-4 border-b border-border bg-background">
-            <WhatsAppConnector qr={qr} connected={connected} />
-          </div>
-        )}
+        {/* Inbox Lite mode: no legacy QR/status UI */}
 
         {selectedConversation ? (
           <ChatArea
