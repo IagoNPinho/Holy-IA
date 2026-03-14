@@ -9,6 +9,7 @@ module.exports = {
       watch: false,
       env: {
         NODE_ENV: "production",
+        INBOX_LITE_MODE: "true"
       },
       error_file: "../logs/holy-ai-backend-error.log",
       out_file: "../logs/holy-ai-backend-out.log",
