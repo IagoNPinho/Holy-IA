@@ -87,6 +87,7 @@ async function persistOutboundMessage({
   text,
   messageType,
   status,
+  externalTimestamp = new Date().toISOString(),
 }) {
   const existing = externalMessageId
     ? await get("SELECT id FROM messages_lite WHERE external_message_id = ?", [externalMessageId])
@@ -95,9 +96,21 @@ async function persistOutboundMessage({
   const result = await run(
     `
     INSERT INTO messages_lite
-      (external_message_id, conversation_id, contact_id, direction, sender_type, message_type, text_content, status, external_timestamp, created_at, updated_at)
+      (
+        external_message_id,
+        conversation_id,
+        contact_id,
+        direction,
+        sender_type,
+        message_type,
+        text_content,
+        status,
+        external_timestamp,
+        created_at,
+        updated_at
+      )
     VALUES
-      (?, ?, ?, 'outbound', 'human', ?, ?, ?, ?, datetime('now'))
+      (?, ?, ?, 'outbound', 'human', ?, ?, ?, ?, datetime('now'), datetime('now'))
     `,
     [
       externalMessageId || null,
@@ -106,7 +119,7 @@ async function persistOutboundMessage({
       messageType || "text",
       text || "",
       status || "queued",
-      new Date().toISOString(),
+      externalTimestamp,
     ]
   );
   await run(
@@ -115,7 +128,7 @@ async function persistOutboundMessage({
     SET last_message_preview = ?, last_message_at = ?, unread_count = 0, updated_at = datetime('now')
     WHERE id = ?
     `,
-    [text || "", new Date().toISOString(), conversationId]
+    [text || "", externalTimestamp, conversationId]
   );
   return result?.lastID;
 }
