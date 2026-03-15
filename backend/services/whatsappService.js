@@ -358,6 +358,17 @@ function getMessageTimestampIso(message) {
   return new Date().toISOString();
 }
 
+function normalizeInboundTimestamp(raw) {
+  if (!raw) return new Date().toISOString();
+  if (typeof raw === "number") {
+    const ms = raw < 1000000000000 ? raw * 1000 : raw;
+    return new Date(ms).toISOString();
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
 function getMediaPreviewLabel(mediaType) {
   if (mediaType === "image") return "Foto"
   if (mediaType === "video") return "Vídeo"
@@ -899,6 +910,167 @@ async function handleIncomingMessage(message) {
   } catch (error) {
     log("error", "message_handling_failed", { error: error?.message });
   }
+}
+
+async function handleProviderInboundEvent(payload) {
+  const rawContactId = payload?.externalChatId || payload?.contact?.phone || null;
+  if (!rawContactId) {
+    throw new Error("Missing externalChatId/contact.phone");
+  }
+  if (
+    rawContactId === "status@broadcast" ||
+    rawContactId?.includes("@newsletter") ||
+    rawContactId?.includes("@g.us")
+  ) {
+    log("info", "skip_broadcast_message", { contactId: rawContactId });
+    return { skipped: true, reason: "unsupported_chat" };
+  }
+
+  const normalizedContactId = normalizeContactId(rawContactId);
+  const contactId = normalizedContactId || rawContactId;
+  const contactName = payload?.contact?.name || contactId;
+  const messageId = payload?.externalMessageId || null;
+  const timestamp = normalizeInboundTimestamp(payload?.timestamp);
+  const messageText = payload?.message?.text || payload?.message?.body || "";
+  const messageTypeRaw = payload?.message?.type || "text";
+  const mediaType = messageTypeRaw && messageTypeRaw !== "text" ? messageTypeRaw : null;
+  const mediaPreview = mediaType ? getMediaPreviewLabel(mediaType) : null;
+  const bodyToStore = String(messageText || "").trim() || mediaPreview || "";
+  const lastMessageText = String(messageText || "").trim() || mediaPreview || "";
+
+  if (!bodyToStore && !mediaType) {
+    log("info", "inbound_message_skipped_empty", {
+      contactId,
+      messageId,
+      messageType: messageTypeRaw,
+    });
+    return { skipped: true, reason: "empty_body" };
+  }
+
+  const existing = await findConversationByContactId(rawContactId, normalizedContactId);
+  const conversation = existing || (await ensureConversation(contactId, contactName));
+  await ensureContact(conversation?.contact_id || contactId);
+
+  const now = Date.now();
+  const fallbackKey = `${conversation?.contact_id || contactId}:${bodyToStore}:${timestamp}`;
+  const dedupeKey = messageId ? `provider:id:${messageId}` : `provider:fallback:${fallbackKey}`;
+  const last = processedMessageIds.get(dedupeKey) || processedMessageKeys.get(dedupeKey);
+  if (last && now - last < 5 * 60 * 1000) {
+    log("info", "duplicate_message_skipped", { messageId, contactId, dedupeKey });
+    return { duplicate: true, conversationId: conversation.id };
+  }
+  if (messageId) {
+    processedMessageIds.set(dedupeKey, now);
+  } else {
+    processedMessageKeys.set(dedupeKey, now);
+  }
+  if (processedMessageIds.size + processedMessageKeys.size > 5000) {
+    for (const [key, value] of processedMessageIds) {
+      if (now - value > 10 * 60 * 1000) {
+        processedMessageIds.delete(key);
+      }
+    }
+    for (const [key, value] of processedMessageKeys) {
+      if (now - value > 10 * 60 * 1000) {
+        processedMessageKeys.delete(key);
+      }
+    }
+  }
+
+  if (messageId) {
+    const existingById = await get(
+      `
+      SELECT id
+      FROM messages
+      WHERE whatsapp_message_id = ?
+      LIMIT 1
+      `,
+      [messageId]
+    );
+    if (existingById?.id) {
+      log("info", "duplicate_message_skipped_by_id", {
+        conversationId: conversation.id,
+        messageId,
+      });
+      return { duplicate: true, conversationId: conversation.id };
+    }
+  }
+
+  const savedId = await saveMessage({
+    conversationId: conversation.id,
+    fromMe: false,
+    body: bodyToStore || "[media]",
+    timestamp,
+    messageType: "incoming",
+    mediaType: mediaType || null,
+    mediaUrl: null,
+    mimeType: null,
+    whatsappMessageId: messageId || null,
+    mediaFilename: null,
+  });
+  log("info", "inbound_message_persisted", {
+    conversationId: conversation.id,
+    messageId: savedId || null,
+    contactId,
+    bodyPreview: getBodyPreview(bodyToStore),
+  });
+
+  await updateConversationIncoming({
+    id: conversation.id,
+    name: contactName,
+    lastMessage: lastMessageText,
+    updatedAt: timestamp,
+  });
+  const snapshot = await getConversationSnapshot(conversation.id);
+  emitSse(
+    "message_received",
+    {
+      conversationId: conversation.id,
+      contactId,
+      message: {
+        id: String(savedId || messageId || `${conversation.id}:${timestamp}`),
+        conversationId: String(conversation.id),
+        content: bodyToStore || "",
+        sender: "contact",
+        timestamp,
+        messageType: "incoming",
+        mediaType: mediaType || null,
+        mediaUrl: null,
+        mimeType: null,
+        mediaFilename: null,
+        whatsappMessageId: messageId || null,
+      },
+      conversation: snapshot
+        ? {
+            id: String(snapshot.id),
+            contactName: toDisplayName(snapshot),
+            lastMessage: snapshot.last_message || lastMessageText,
+            timestamp: snapshot.updated_at || timestamp,
+            unread: snapshot.unread_count || 0,
+            aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+            resolvedAt: snapshot.resolved_at || null,
+          }
+        : undefined,
+    },
+    "sse_emit_message_received"
+  );
+  emitSse(
+    "conversation_updated",
+    {
+      conversationId: conversation.id,
+      contactId,
+      lastMessage: snapshot?.last_message || lastMessageText,
+      updatedAt: snapshot?.updated_at || timestamp,
+      unreadDelta: 1,
+    },
+    "sse_emit_conversation_updated"
+  );
+
+  return {
+    conversationId: conversation.id,
+    messageId: savedId || null,
+    contactId,
+  };
 }
 
 function resolveOutgoingContactId(message) {
@@ -2145,4 +2317,5 @@ module.exports = {
   sendBulk,
   scheduleSend,
   syncInitialChats,
+  handleProviderInboundEvent,
 };

@@ -7,9 +7,11 @@ const {
   sendManual,
   toggleAi,
 } = require("../controllers/inboxLiteController");
+const { inboundLegacyWebhook } = require("../controllers/whatsappInboundBridgeController");
 
 const publicRouter = express.Router();
 publicRouter.post("/api/webhooks/whatsapp/inbound", inboundWebhook);
+publicRouter.post("/api/webhooks/whatsapp/inbound-legacy", inboundLegacyWebhook);
 publicRouter.post("/api/webhooks/whatsapp/outbound-status", outboundStatusWebhook);
 
 const privateRouter = express.Router();
