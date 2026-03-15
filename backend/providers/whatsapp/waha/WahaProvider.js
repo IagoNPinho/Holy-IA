@@ -21,14 +21,10 @@ class WahaProvider extends WhatsappProvider {
     }
     const endpoint = env.WAHA_SEND_ENDPOINT || "/api/sendText";
     const url = `${baseUrl}${endpoint}`;
+    const normalizedChatId = to && String(to).includes("@") ? String(to) : `${to}@c.us`;
     const body = {
       session: instanceId || "default",
-      chatId: to,
-      text,
-    };
-    const fallbackBody = {
-      session: instanceId || "default",
-      to,
+      chatId: normalizedChatId,
       text,
     };
     console.info(
@@ -38,15 +34,16 @@ class WahaProvider extends WhatsappProvider {
         message: "waha_send_request",
         url,
         session: instanceId || "default",
-        chatId: to,
+        chatId: normalizedChatId,
         bodyPreview: (text || "").slice(0, 20),
+        authMode: env.WAHA_API_KEY ? "x-api-key" : "none",
       })
     );
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(env.WAHA_API_KEY ? { Authorization: `Bearer ${env.WAHA_API_KEY}` } : {}),
+        ...(env.WAHA_API_KEY ? { "X-Api-Key": env.WAHA_API_KEY } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -61,41 +58,23 @@ class WahaProvider extends WhatsappProvider {
           response: textBody || "",
         })
       );
-      const retry = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(env.WAHA_API_KEY ? { Authorization: `Bearer ${env.WAHA_API_KEY}` } : {}),
-        },
-        body: JSON.stringify(fallbackBody),
-      });
-      if (!retry.ok) {
-        const retryBody = await retry.text();
-        throw new Error(retryBody || `WAHA send failed: ${retry.status}`);
-      }
-      const payload = await retry.json().catch(() => ({}));
-      console.info(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          level: "info",
-          message: "waha_send_success_fallback",
-        })
-      );
-      return {
-        providerMessageId: payload?.id || payload?.messageId || payload?.data?.id || null,
-        status: payload?.status || "sent",
-      };
+      throw new Error(textBody || `WAHA send failed: ${res.status}`);
     }
     const payload = await res.json().catch(() => ({}));
+    const providerMessageId =
+      payload?.id?._serialized ||
+      payload?._data?.id?._serialized ||
+      null;
     console.info(
       JSON.stringify({
         ts: new Date().toISOString(),
         level: "info",
         message: "waha_send_success_primary",
+        providerMessageId,
       })
     );
     return {
-      providerMessageId: payload?.id || payload?.messageId || payload?.data?.id || null,
+      providerMessageId,
       status: payload?.status || "sent",
     };
   }
