@@ -133,6 +133,18 @@ async function persistOutboundMessage({
   return result?.lastID;
 }
 
+async function setOutboundProviderMessageId(messageId, externalMessageId, status) {
+  if (!messageId || !externalMessageId) return null;
+  return run(
+    `
+    UPDATE messages_lite
+    SET external_message_id = ?, status = COALESCE(?, status), updated_at = datetime('now')
+    WHERE id = ?
+    `,
+    [externalMessageId, status || null, messageId]
+  );
+}
+
 async function listConversations(limit = 50, offset = 0) {
   return all(
     `
@@ -228,4 +240,5 @@ module.exports = {
   listMessages,
   setAiEnabled,
   updateOutboundStatus,
+  setOutboundProviderMessageId,
 };

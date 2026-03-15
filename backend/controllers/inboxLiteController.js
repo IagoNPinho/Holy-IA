@@ -10,7 +10,9 @@ const {
   listMessages,
   setAiEnabled,
   updateOutboundStatus,
+  setOutboundProviderMessageId,
 } = require("../services/inboxLiteService");
+const { getProvider } = require("../providers/whatsapp/base/providerRegistry");
 
 function log(level, message, meta = {}) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), level, message, ...meta }));
@@ -30,7 +32,11 @@ function emitSse(type, payload, logMessage) {
 
 async function inboundWebhook(req, res, next) {
   try {
-    const payload = req.body || {};
+    const provider = getProvider();
+    log("info", "inbound_webhook_payload", {
+      body: req.body || {},
+    });
+    const payload = provider.parseInboundEvent(req.body || {});
     const externalChatId = payload.externalChatId || payload.contact?.phone;
     const externalMessageId = payload.externalMessageId;
     const contactPhone = normalizePhone(payload.contact?.phone || externalChatId);
@@ -185,6 +191,22 @@ async function sendManual(req, res, next) {
       status: "queued",
     });
 
+    const provider = getProvider();
+    let providerMessageId = null;
+    try {
+      const sendResult = await provider.sendText({
+        to: conv.phone,
+        text: messageBody,
+        instanceId: "default",
+      });
+      providerMessageId = sendResult?.providerMessageId || null;
+      if (providerMessageId) {
+        await setOutboundProviderMessageId(savedId, providerMessageId, sendResult?.status || "sent");
+      }
+    } catch (error) {
+      log("error", "provider_send_failed", { error: error?.message, conversationId: conv.id });
+    }
+
     emitSse(
       "message_sent",
       {
@@ -192,6 +214,7 @@ async function sendManual(req, res, next) {
         contactId: conv.contact_id,
         message: {
           id: savedId,
+          externalMessageId: providerMessageId || null,
           conversationId: conv.id,
           content: messageBody,
           sender: "user",

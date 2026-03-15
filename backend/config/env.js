@@ -31,6 +31,10 @@ const env = {
   HUMAN_BASE_DELAY_MS: Number(process.env.HUMAN_BASE_DELAY_MS || 1500),
   HUMAN_SPLIT_DELAY_MS: Number(process.env.HUMAN_SPLIT_DELAY_MS || 600),
   INBOX_LITE_MODE: process.env.INBOX_LITE_MODE === "true",
+  WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || "waha",
+  WAHA_BASE_URL: process.env.WAHA_BASE_URL || "",
+  WAHA_SEND_ENDPOINT: process.env.WAHA_SEND_ENDPOINT || "/api/sendText",
+  WAHA_API_KEY: process.env.WAHA_API_KEY || "",
 };
 
 const groqApiKey = env.GROQ_API_KEY;

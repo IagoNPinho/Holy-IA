@@ -4,7 +4,7 @@
 Phase 3 - Frontend Inbox Lite rewiring to new endpoints
 
 ## Current Phase
-Phase 4.1 - Inbox Lite UI cleanup (remove legacy WhatsApp polling/UI)
+Phase 2.1 - WAHA provider adapter integration
 
 ## Next Phase
 Phase 2 - n8n Send Integration
@@ -24,3 +24,6 @@ Legacy whatsapp-web.js runtime is now gated behind `INBOX_LITE_MODE=true`.
 
 ## Inbox Lite Mode Flag
 - `INBOX_LITE_MODE=true` disables whatsapp-web.js startup and returns safe responses for `/whatsapp/status` and `/whatsapp/qr`.
+
+## Provider Selection
+- `WHATSAPP_PROVIDER=waha` routes inbound parsing and outbound send through the WAHA provider adapter.
