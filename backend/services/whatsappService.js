@@ -4,6 +4,7 @@ const fs = require("fs");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const { env } = require("../config/env");
+const { getProvider } = require("../providers/whatsapp/base/providerRegistry");
 const { get, run, all } = require("../database/db");
 const { generateAIResponse } = require("./aiService");
 const { getAiEnabled } = require("./settingsService");
@@ -1851,12 +1852,93 @@ async function disconnect() {
 }
 
 async function sendManualMessage({ to, body }) {
-  if (!client) throw new Error("WhatsApp client not initialized");
   const normalizedTo = normalizeContactId(to);
   const existing = await findConversationByContactId(to, normalizedTo);
   const convo = existing || (await ensureConversation(normalizedTo || to, to));
   await ensureContact(convo?.contact_id || normalizedTo || to);
   const targetId = convo?.contact_id || normalizedTo || to;
+  const useProvider = env.INBOX_LITE_MODE || (env.WHATSAPP_PROVIDER || "waha") !== "wwebjs";
+  if (useProvider) {
+    const provider = getProvider();
+    log("info", "messages_send_bridge_provider", {
+      provider: provider.getName(),
+      conversationId: convo.id,
+      contactId: targetId,
+    });
+    const sendResult = await provider.sendText({
+      to: targetId,
+      text: body,
+      instanceId: env.WHATSAPP_INSTANCE_ID || "default",
+    });
+    const outTimestamp = new Date().toISOString();
+    const savedId = await saveMessage({
+      conversationId: convo.id,
+      fromMe: true,
+      body,
+      timestamp: outTimestamp,
+      messageType: "manual",
+      whatsappMessageId: sendResult?.providerMessageId || null,
+      mediaFilename: null,
+    });
+    log("info", "outbound_panel_message_persisted", {
+      conversationId: convo.id,
+      messageId: savedId || null,
+      contactId: targetId,
+      bodyPreview: getBodyPreview(body),
+    });
+    await updateConversation({
+      id: convo.id,
+      name: convo.name || to,
+      lastMessage: body,
+      updatedAt: outTimestamp,
+    });
+    const snapshot = await getConversationSnapshot(convo.id);
+    emitSse(
+      "message_sent",
+      {
+        conversationId: convo.id,
+        contactId: targetId,
+        message: {
+          id: String(savedId || sendResult?.providerMessageId || `${convo.id}:${outTimestamp}`),
+          conversationId: String(convo.id),
+          content: body,
+          sender: "user",
+          timestamp: outTimestamp,
+          messageType: "manual",
+          mediaType: null,
+          mediaUrl: null,
+          mimeType: null,
+          mediaFilename: null,
+          whatsappMessageId: sendResult?.providerMessageId || null,
+        },
+        conversation: snapshot
+          ? {
+              id: String(snapshot.id),
+              contactName: toDisplayName(snapshot),
+              lastMessage: snapshot.last_message || body,
+              timestamp: snapshot.updated_at || outTimestamp,
+              unread: snapshot.unread_count || 0,
+              aiEnabled: Boolean(snapshot.ai_enabled ?? 1),
+              resolvedAt: snapshot.resolved_at || null,
+            }
+          : undefined,
+      },
+      "sse_emit_message_sent"
+    );
+    emitSse(
+      "conversation_updated",
+      {
+        conversationId: convo.id,
+        contactId: targetId,
+        lastMessage: snapshot?.last_message || body,
+        updatedAt: snapshot?.updated_at || outTimestamp,
+      },
+      "sse_emit_conversation_updated"
+    );
+    return;
+  }
+
+  if (!client) throw new Error("WhatsApp client not initialized");
   const pendingKey = `${targetId}:${body}:out`;
   pendingOutbound.set(pendingKey, { ts: Date.now(), messageId: null });
   setTimeout(() => pendingOutbound.delete(pendingKey), 30000);

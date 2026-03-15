@@ -37,6 +37,8 @@ class WahaProvider extends WhatsappProvider {
         level: "info",
         message: "waha_send_request",
         url,
+        session: instanceId || "default",
+        chatId: to,
         bodyPreview: (text || "").slice(0, 20),
       })
     );

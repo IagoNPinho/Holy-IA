@@ -197,6 +197,11 @@ async function listMessages(req, res, next) {
 async function sendManual(req, res, next) {
   try {
     const { to, body, conversationId } = req.body || {};
+    console.info("messages_send_bridge_active", {
+      route: "/messages/send",
+      conversationId: conversationId || null,
+      to: to || null,
+    });
     if (!conversationId && (!to || typeof to !== "string")) {
       return res.status(400).json({ error: "Destinatario obrigatorio." });
     }

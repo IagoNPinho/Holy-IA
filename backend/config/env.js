@@ -35,6 +35,7 @@ const env = {
   WAHA_BASE_URL: process.env.WAHA_BASE_URL || "",
   WAHA_SEND_ENDPOINT: process.env.WAHA_SEND_ENDPOINT || "/api/sendText",
   WAHA_API_KEY: process.env.WAHA_API_KEY || "",
+  WHATSAPP_INSTANCE_ID: process.env.WHATSAPP_INSTANCE_ID || "default",
 };
 
 const groqApiKey = env.GROQ_API_KEY;
