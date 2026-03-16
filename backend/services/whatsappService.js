@@ -591,6 +591,14 @@ async function saveIncomingMedia(message) {
 
 async function handleIncomingMessage(message) {
   try {
+    const providerName = env.WHATSAPP_PROVIDER || "waha";
+    if (providerName === "waha") {
+      log("info", "inbound_skipped_waha_mode", {
+        messageId: message?.id?._serialized || message?.id?.id || null,
+        from: message?.from || null,
+      });
+      return;
+    }
     if (message?.fromMe) {
       return;
     }
@@ -831,16 +839,35 @@ async function handleIncomingMessage(message) {
 
     for (let i = 0; i < messagesToSend.length; i += 1) {
       const body = messagesToSend[i];
-      const sentMessage = await client.sendMessage(contactId, body);
-      registerOutgoingMessageId(sentMessage);
-      const outTimestamp = getMessageTimestampIso(sentMessage);
+      let providerMessageId = null;
+      let outTimestamp = new Date().toISOString();
+      if ((env.WHATSAPP_PROVIDER || "waha") === "waha") {
+        const provider = getProvider();
+        const sendResult = await provider.sendText({
+          to: contactId,
+          text: body,
+          instanceId: env.WHATSAPP_INSTANCE_ID || "default",
+        });
+        providerMessageId = sendResult?.providerMessageId || null;
+        log("info", "ai_reply_sent_via_provider", {
+          provider: provider.getName(),
+          contactId,
+          bodyPreview: getBodyPreview(body),
+          providerMessageId,
+        });
+      } else {
+        const sentMessage = await client.sendMessage(contactId, body);
+        registerOutgoingMessageId(sentMessage);
+        outTimestamp = getMessageTimestampIso(sentMessage);
+        providerMessageId = sentMessage?.id?._serialized || sentMessage?.id?.id || null;
+      }
       const savedId = await saveMessage({
         conversationId: conversation.id,
         fromMe: true,
         body,
         timestamp: outTimestamp,
         messageType: "ai",
-        whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
+        whatsappMessageId: providerMessageId,
       });
       log("info", "outbound_ai_message_persisted", {
         conversationId: conversation.id,
@@ -861,7 +888,7 @@ async function handleIncomingMessage(message) {
         conversationId: conversation.id,
         contactId,
         message: {
-          id: String(savedId || sentMessage?.id?._serialized || `${conversation.id}:${outTimestamp}`),
+          id: String(savedId || providerMessageId || `${conversation.id}:${outTimestamp}`),
           conversationId: String(conversation.id),
           content: body,
           sender: "ai",
@@ -871,7 +898,7 @@ async function handleIncomingMessage(message) {
           mediaUrl: null,
           mimeType: null,
           mediaFilename: null,
-          whatsappMessageId: sentMessage?.id?._serialized || sentMessage?.id?.id || null,
+          whatsappMessageId: providerMessageId,
         },
           conversation: snapshot
             ? {
