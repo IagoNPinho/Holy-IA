@@ -15,6 +15,13 @@ function log(level, message, meta = {}) {
 
 async function inboundLegacyWebhook(req, res, next) {
   try {
+    if (req?.body?.event && req.body.event !== "message") {
+      log("info", "provider_inbound_event_ignored", {
+        event: req.body.event,
+        session: req.body.session || null,
+      });
+      return res.json({ ok: true, ignored: true });
+    }
     const provider = getProvider();
     log("info", "provider_inbound_webhook_received", {
       provider: provider.getName(),

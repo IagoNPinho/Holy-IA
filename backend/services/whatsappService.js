@@ -603,12 +603,12 @@ async function handleIncomingMessage(message) {
       return;
     }
     const rawContactId = message.fromMe ? message.to : message.from;
-    if (
-      rawContactId === "status@broadcast" ||
-      rawContactId?.includes("@newsletter") ||
-      rawContactId?.includes("@g.us")
-    ) {
+    if (rawContactId === "status@broadcast" || rawContactId?.includes("@newsletter")) {
       log("info", "skip_broadcast_message", { contactId: rawContactId });
+      return;
+    }
+    if (rawContactId?.includes("@g.us")) {
+      log("info", "skip_group_message", { contactId: rawContactId });
       return;
     }
     const normalizedContactId = normalizeContactId(rawContactId);
@@ -949,8 +949,12 @@ async function handleProviderInboundEvent(payload) {
     rawContactId?.includes("@newsletter") ||
     rawContactId?.includes("@g.us")
   ) {
+    if (rawContactId?.includes("@g.us")) {
+      log("info", "skip_group_message", { contactId: rawContactId });
+      return { skipped: true, reason: "group_chat" };
+    }
     log("info", "skip_broadcast_message", { contactId: rawContactId });
-    return { skipped: true, reason: "unsupported_chat" };
+    return { skipped: true, reason: "broadcast" };
   }
 
   const normalizedContactId = normalizeContactId(rawContactId);
