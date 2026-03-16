@@ -76,15 +76,34 @@ app.use(inboxLitePublicRouter);
 function sseAuthRequired(req, res, next) {
   const header = req.headers.authorization || "";
   const tokenFromHeader = header.startsWith("Bearer ") ? header.slice(7) : null;
-  const token = tokenFromHeader || req.query.token;
+  const queryTokenRaw = Array.isArray(req.query.token) ? req.query.token[0] : req.query.token;
+  const tokenFromQuery =
+    typeof queryTokenRaw === "string"
+      ? queryTokenRaw.startsWith("Bearer ")
+        ? queryTokenRaw.slice(7)
+        : queryTokenRaw
+      : null;
+  const token = tokenFromHeader || tokenFromQuery;
   if (!token) {
+    log("warn", "sse_auth_failed", {
+      reason: "missing_token",
+      hasHeader: Boolean(tokenFromHeader),
+      hasQuery: Boolean(tokenFromQuery),
+    });
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
     const payload = jwt.verify(token, env.JWT_SECRET);
     req.user = payload;
+    log("info", "sse_auth_success", {
+      source: tokenFromHeader ? "header" : "query",
+      userId: payload?.id || payload?.userId || null,
+    });
     return next();
   } catch (error) {
+    log("warn", "sse_auth_failed", {
+      reason: error?.message || "invalid_token",
+    });
     return res.status(401).json({ error: "Unauthorized" });
   }
 }
@@ -170,3 +189,6 @@ setInterval(() => {
     console.warn("[WATCHDOG] High memory usage detected", { rss_mb: mem.toFixed(0) });
   }
 }, 120000);
+
+
+
