@@ -15,8 +15,6 @@ function mapInbound(body) {
       body?.from ||
       body?.data?.from ||
       null;
-    const externalChatId =
-      typeof rawChatId === "string" ? rawChatId.replace(/@lid$/, "@c.us") : rawChatId;
 
     const externalMessageId =
       payload?.id ||
@@ -27,16 +25,37 @@ function mapInbound(body) {
       null;
 
     const isGroup = typeof payload?.from === "string" && payload.from.endsWith("@g.us");
+    const rawParticipant = payload?.participant || null;
+    const rawFrom = payload?.from || rawChatId || null;
+    const normalizeId = (value) =>
+      typeof value === "string" ? value.replace(/@lid$/, "@c.us") : value;
+    const digitsOnly = (value) =>
+      typeof value === "string" ? value.replace(/[^\d]/g, "") : "";
+    const fromDigits = digitsOnly(rawFrom);
+    const participantDigits = digitsOnly(rawParticipant);
+    const fromLooksTechnical = fromDigits.length > 13;
+    const participantLooksPhone = participantDigits.length >= 10 && participantDigits.length <= 13;
+
     let contactPhone =
-      (isGroup ? payload?.participant : null) ||
-      payload?.from ||
+      (isGroup ? rawParticipant : null) ||
+      rawFrom ||
       body?.contact?.phone ||
       body?.from ||
       body?.data?.from ||
       null;
-    if (typeof contactPhone === "string") {
-      contactPhone = contactPhone.replace(/@lid$/, "@c.us");
+
+    if (!isGroup && rawParticipant && rawParticipant !== rawFrom) {
+      if (participantLooksPhone || fromLooksTechnical) {
+        contactPhone = rawParticipant;
+      }
     }
+
+    contactPhone = normalizeId(contactPhone);
+    const externalChatId = normalizeId(
+      !isGroup && rawParticipant && (participantLooksPhone || fromLooksTechnical)
+        ? rawParticipant
+        : rawFrom
+    );
 
     if (payload?.from === "status@broadcast") {
       contactPhone = payload?.from;
@@ -56,6 +75,18 @@ function mapInbound(body) {
           message: "waha_inbound_skip_group",
           from: payload?.from,
           participant: payload?.participant || null,
+        })
+      );
+    } else if (rawParticipant && rawParticipant !== rawFrom && (participantLooksPhone || fromLooksTechnical)) {
+      console.info(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          level: "info",
+          message: "waha_inbound_contact_override",
+          from: rawFrom,
+          participant: rawParticipant,
+          contactPhone,
+          externalChatId,
         })
       );
     }
