@@ -6,6 +6,12 @@ function normalizePhone(phone) {
   return digits.startsWith("55") ? digits : `55${digits}`;
 }
 
+function normalizeExternalChatId(chatId) {
+  if (!chatId || typeof chatId !== "string") return chatId;
+  if (chatId.endsWith("@lid")) return chatId.replace(/@lid$/, "@c.us");
+  return chatId;
+}
+
 function normalizeExternalTimestamp(raw) {
   if (!raw) return new Date().toISOString();
   if (typeof raw === "number") {
@@ -37,17 +43,26 @@ async function upsertContact({ phone, name }) {
 }
 
 async function upsertConversation({ externalChatId, contactId, instanceId, channel }) {
+  const normalizedChatId = normalizeExternalChatId(externalChatId);
   const existing = await get(
-    "SELECT id, ai_enabled FROM conversations_lite WHERE external_chat_id = ? LIMIT 1",
-    [externalChatId]
+    "SELECT id, external_chat_id, ai_enabled FROM conversations_lite WHERE external_chat_id IN (?, ?) LIMIT 1",
+    [externalChatId, normalizedChatId]
   );
-  if (existing) return existing.id;
+  if (existing) {
+    if (normalizedChatId && existing.external_chat_id !== normalizedChatId) {
+      await run(
+        "UPDATE conversations_lite SET external_chat_id = ?, updated_at = datetime('now') WHERE id = ?",
+        [normalizedChatId, existing.id]
+      );
+    }
+    return existing.id;
+  }
   const result = await run(
     `
     INSERT INTO conversations_lite (external_chat_id, contact_id, instance_id, channel, status, ai_enabled, created_at, updated_at)
     VALUES (?, ?, ?, ?, 'new', 1, datetime('now'), datetime('now'))
     `,
-    [externalChatId, contactId, instanceId || null, channel || "whatsapp"]
+    [normalizedChatId || externalChatId, contactId, instanceId || null, channel || "whatsapp"]
   );
   return result?.lastID;
 }
@@ -343,6 +358,7 @@ async function updateOutboundStatus({ externalMessageId, status }) {
 
 module.exports = {
   normalizePhone,
+  normalizeExternalChatId,
   upsertContact,
   upsertConversation,
   persistInboundMessage,

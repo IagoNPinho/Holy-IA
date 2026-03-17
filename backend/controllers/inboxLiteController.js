@@ -2,6 +2,7 @@ const { sendEvent } = require("../services/sseService");
 const { get } = require("../database/db");
 const {
   normalizePhone,
+  normalizeExternalChatId,
   upsertContact,
   upsertConversation,
   persistInboundMessage,
@@ -148,8 +149,9 @@ async function getMessages(req, res, next) {
     );
     let rows = await listMessages(id, limit);
     const provider = getProvider();
+    const normalizedChatId = normalizeExternalChatId(convo?.external_chat_id);
     const canSync =
-      Boolean(convo?.external_chat_id) &&
+      Boolean(normalizedChatId) &&
       typeof provider.fetchRecentMessages === "function";
 
     if (!canSync) {
@@ -166,14 +168,14 @@ async function getMessages(req, res, next) {
     } else {
       log("info", "sync_started", {
         conversationId: id,
-        externalChatId: convo.external_chat_id,
+        externalChatId: normalizedChatId,
         existingCount: rows.length,
         limit,
       });
       try {
         const fetched = await provider.fetchRecentMessages({
           sessionId: convo.instance_id || "default",
-          externalChatId: convo.external_chat_id,
+          externalChatId: normalizedChatId,
           limit,
         });
         log("info", "sync_fetched_count", {
