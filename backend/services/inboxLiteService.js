@@ -6,6 +6,17 @@ function normalizePhone(phone) {
   return digits.startsWith("55") ? digits : `55${digits}`;
 }
 
+function normalizeExternalTimestamp(raw) {
+  if (!raw) return new Date().toISOString();
+  if (typeof raw === "number") {
+    const ms = raw < 1000000000000 ? raw * 1000 : raw;
+    return new Date(ms).toISOString();
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
 async function upsertContact({ phone, name }) {
   const normalized = normalizePhone(phone);
   const existing = await get("SELECT id, name FROM contacts_lite WHERE phone = ?", [normalized]);
@@ -133,6 +144,106 @@ async function persistOutboundMessage({
   return result?.lastID;
 }
 
+async function syncMessagesFromProvider({ conversationId, contactId, messages }) {
+  let inserted = 0;
+  let deduped = 0;
+  let newest = null;
+
+  for (const message of messages || []) {
+    const externalMessageId = message?.externalMessageId || null;
+    const text = message?.text || "";
+    const messageType = message?.messageType || "text";
+    const fromMe = Boolean(message?.fromMe);
+    const externalTimestamp = normalizeExternalTimestamp(message?.timestamp);
+
+    if (externalMessageId) {
+      const existing = await get(
+        "SELECT id FROM messages_lite WHERE external_message_id = ? LIMIT 1",
+        [externalMessageId]
+      );
+      if (existing?.id) {
+        deduped += 1;
+        continue;
+      }
+    } else {
+      const fallbackExisting = await get(
+        `
+        SELECT id
+        FROM messages_lite
+        WHERE conversation_id = ?
+          AND text_content = ?
+          AND ABS(strftime('%s', COALESCE(external_timestamp, created_at)) - strftime('%s', ?)) < 30
+        LIMIT 1
+        `,
+        [conversationId, text, externalTimestamp]
+      );
+      if (fallbackExisting?.id) {
+        deduped += 1;
+        continue;
+      }
+    }
+
+    await run(
+      `
+      INSERT INTO messages_lite
+        (
+          external_message_id,
+          conversation_id,
+          contact_id,
+          direction,
+          sender_type,
+          message_type,
+          text_content,
+          status,
+          external_timestamp,
+          created_at,
+          updated_at
+        )
+      VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `,
+      [
+        externalMessageId,
+        conversationId,
+        contactId,
+        fromMe ? "outbound" : "inbound",
+        fromMe ? "human" : "customer",
+        messageType || "text",
+        text || "",
+        fromMe ? "sent" : "received",
+        externalTimestamp,
+      ]
+    );
+
+    inserted += 1;
+    if (!newest || externalTimestamp > newest.timestamp) {
+      newest = { timestamp: externalTimestamp, text: text || "" };
+    }
+  }
+
+  if (newest) {
+    await run(
+      `
+      UPDATE conversations_lite
+      SET
+        last_message_preview = CASE
+          WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+          ELSE last_message_preview
+        END,
+        last_message_at = CASE
+          WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
+          ELSE last_message_at
+        END,
+        updated_at = datetime('now')
+      WHERE id = ?
+      `,
+      [newest.timestamp, newest.text, newest.timestamp, newest.timestamp, conversationId]
+    );
+  }
+
+  return { inserted, deduped };
+}
+
 async function setOutboundProviderMessageId(messageId, externalMessageId, status) {
   if (!messageId || !externalMessageId) return null;
   return run(
@@ -241,4 +352,5 @@ module.exports = {
   setAiEnabled,
   updateOutboundStatus,
   setOutboundProviderMessageId,
+  syncMessagesFromProvider,
 };

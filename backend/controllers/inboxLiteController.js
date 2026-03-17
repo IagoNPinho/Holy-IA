@@ -11,6 +11,7 @@ const {
   setAiEnabled,
   updateOutboundStatus,
   setOutboundProviderMessageId,
+  syncMessagesFromProvider,
 } = require("../services/inboxLiteService");
 const { getProvider } = require("../providers/whatsapp/base/providerRegistry");
 
@@ -137,7 +138,68 @@ async function getMessages(req, res, next) {
   try {
     const { id } = req.params;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const rows = await listMessages(id, limit);
+    const convo = await get(
+      `
+      SELECT c.id, c.external_chat_id, c.instance_id, c.contact_id, c.last_message_at
+      FROM conversations_lite c
+      WHERE c.id = ?
+      `,
+      [id]
+    );
+    let rows = await listMessages(id, limit);
+    const provider = getProvider();
+    const canSync =
+      Boolean(convo?.external_chat_id) &&
+      typeof provider.fetchRecentMessages === "function";
+
+    if (!canSync) {
+      log("info", "sync_skipped", {
+        conversationId: id,
+        reason: "provider_unavailable",
+      });
+    } else if (rows.length >= limit) {
+      log("info", "sync_skipped", {
+        conversationId: id,
+        reason: "already_loaded",
+        count: rows.length,
+      });
+    } else {
+      log("info", "sync_started", {
+        conversationId: id,
+        externalChatId: convo.external_chat_id,
+        existingCount: rows.length,
+        limit,
+      });
+      try {
+        const fetched = await provider.fetchRecentMessages({
+          sessionId: convo.instance_id || "default",
+          externalChatId: convo.external_chat_id,
+          limit,
+        });
+        log("info", "sync_fetched_count", {
+          conversationId: id,
+          count: fetched.length,
+        });
+        const result = await syncMessagesFromProvider({
+          conversationId: id,
+          contactId: convo.contact_id,
+          messages: fetched,
+        });
+        log("info", "sync_inserted_count", {
+          conversationId: id,
+          count: result.inserted,
+        });
+        log("info", "sync_deduped_count", {
+          conversationId: id,
+          count: result.deduped,
+        });
+        if (result.inserted > 0) {
+          rows = await listMessages(id, limit);
+        }
+      } catch (error) {
+        log("warn", "sync_failed", { conversationId: id, error: error?.message });
+      }
+    }
     const data = rows
       .slice()
       .reverse()

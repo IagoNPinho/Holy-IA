@@ -16,6 +16,12 @@ class WhatsappProvider {
   async sendText(_params) {
     throw new Error("sendText not implemented");
   }
+
+  // Fetch recent messages for a chat.
+  // Must return array of { externalMessageId, externalChatId, text, timestamp, fromMe, messageType }
+  async fetchRecentMessages(_params) {
+    throw new Error("fetchRecentMessages not implemented");
+  }
 }
 
 module.exports = { WhatsappProvider };
