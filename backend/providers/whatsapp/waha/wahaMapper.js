@@ -8,13 +8,15 @@ function mapInbound(body) {
     }
 
     const payload = body?.payload || {};
-    const externalChatId =
+    const rawChatId =
       payload?.from ||
       body?.chatId ||
       body?.chat_id ||
       body?.from ||
       body?.data?.from ||
       null;
+    const externalChatId =
+      typeof rawChatId === "string" ? rawChatId.replace(/@lid$/, "@c.us") : rawChatId;
 
     const externalMessageId =
       payload?.id ||
@@ -24,13 +26,17 @@ function mapInbound(body) {
       body?.data?.id ||
       null;
 
+    const isGroup = typeof payload?.from === "string" && payload.from.endsWith("@g.us");
     let contactPhone =
-      payload?.participant ||
+      (isGroup ? payload?.participant : null) ||
       payload?.from ||
       body?.contact?.phone ||
       body?.from ||
       body?.data?.from ||
       null;
+    if (typeof contactPhone === "string") {
+      contactPhone = contactPhone.replace(/@lid$/, "@c.us");
+    }
 
     if (payload?.from === "status@broadcast") {
       contactPhone = payload?.from;
@@ -42,7 +48,7 @@ function mapInbound(body) {
           from: payload?.from,
         })
       );
-    } else if (payload?.from && payload.from.endsWith("@g.us")) {
+    } else if (isGroup) {
       console.info(
         JSON.stringify({
           ts: new Date().toISOString(),
