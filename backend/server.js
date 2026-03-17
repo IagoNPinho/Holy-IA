@@ -29,6 +29,9 @@ const { inboxLitePublicRouter, inboxLitePrivateRouter } = require("./routes/inbo
 
 const app = express();
 
+const legacyWhatsappEnabled =
+  !env.INBOX_LITE_MODE && (env.WHATSAPP_PROVIDER || "waha") === "wwebjs";
+
 // Structured console logger (JSON lines).
 function log(level, message, meta = {}) {
   const payload = {
@@ -133,7 +136,7 @@ app.use(inboxLitePrivateRouter);
 app.use(conversationsRouter);
 app.use(settingsRouter);
 app.use(toggleRouter);
-if (!env.INBOX_LITE_MODE) {
+if (legacyWhatsappEnabled) {
   app.use(whatsappRouter);
 }
 app.use(aiRouter);
@@ -160,7 +163,7 @@ app.use((err, req, res, _next) => {
 async function bootstrap() {
   try {
     await migrate();
-    if (!env.INBOX_LITE_MODE) {
+    if (legacyWhatsappEnabled) {
       await initWhatsappClient();
       await loadPendingFollowups();
     }
